@@ -1,0 +1,16 @@
+# Environments
+.env
+
+# Deployments
+
+
+# AI
+.claude/*
+
+# IDE's
+.vscode/*
+.idea
+
+# Binaries
+indexer
+bin/
