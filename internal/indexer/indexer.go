@@ -37,8 +37,10 @@ type Indexer struct {
 	pool pond.Pool
 }
 
-func NewIndexer(networkPasspharse string) *Indexer {
-	return &Indexer{}
+func NewIndexer(networkPasspharse string, pool pond.Pool) *Indexer {
+	return &Indexer{
+		pool: pool,
+	}
 }
 
 // ProcessLedgerTransactions processes all transactions in a ledger in parallel.

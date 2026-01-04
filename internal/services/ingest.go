@@ -9,6 +9,7 @@ import (
 
 	"github.com/Trustless-Work/Indexer/internal/indexer"
 	"github.com/Trustless-Work/Indexer/internal/utils"
+	"github.com/alitto/pond/v2"
 	"github.com/stellar/go-stellar-sdk/ingest"
 	"github.com/stellar/go-stellar-sdk/ingest/ledgerbackend"
 	"github.com/stellar/go-stellar-sdk/support/log"
@@ -36,14 +37,14 @@ func NewIngestService(
 	networkPassphrase string,
 ) (*ingestService, error) {
 	// Create worker pool for the ledger indexer (parallel transaction processing within a ledger)
-	//ledgerIndexerPool := pond.NewPool(0)
+	ledgerIndexerPool := pond.NewPool(0)
 
 	return &ingestService{
 		rpcService:        rpcService,
 		ledgerBackend:     ledgerBackend,
 		networkPassphrase: networkPassphrase,
 		getLedgersLimit:   getLedgersLimit,
-		ledgerIndexer:     indexer.NewIndexer(networkPassphrase),
+		ledgerIndexer:     indexer.NewIndexer(networkPassphrase, ledgerIndexerPool),
 	}, nil
 }
 

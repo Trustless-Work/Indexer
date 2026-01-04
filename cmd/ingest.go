@@ -19,6 +19,6 @@ func main() {
 	}
 	err := ingest.Ingest(cfg)
 	if err != nil {
-		fmt.Errorf("running ingest: %w", err)
+		fmt.Printf("running ingest: %w", err)
 	}
 }
