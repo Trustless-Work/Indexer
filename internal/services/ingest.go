@@ -10,11 +10,60 @@ import (
 	"github.com/Trustless-Work/Indexer/internal/indexer"
 	"github.com/Trustless-Work/Indexer/internal/utils"
 	"github.com/alitto/pond/v2"
+	"github.com/stellar/go-stellar-sdk/historyarchive"
 	"github.com/stellar/go-stellar-sdk/ingest"
 	"github.com/stellar/go-stellar-sdk/ingest/ledgerbackend"
 	"github.com/stellar/go-stellar-sdk/support/log"
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
+
+const (
+	// maxLedgerFetchRetries is the maximum number of retry attempts when fetching a ledger fails.
+	maxLedgerFetchRetries = 10
+	// maxRetryBackoff is the maximum backoff duration between retry attempts.
+	maxRetryBackoff = 30 * time.Second
+	// IngestionModeLive represents continuous ingestion from the latest ledger onwards.
+	IngestionModeLive = "live"
+	// IngestionModeBackfill represents historical ledger ingestion for a specified range.
+	IngestionModeBackfill = "backfill"
+)
+
+// LedgerBackendFactory creates new LedgerBackend instances for parallel batch processing.
+// Each batch needs its own backend because LedgerBackend is not thread-safe.
+type LedgerBackendFactory func(ctx context.Context) (ledgerbackend.LedgerBackend, error)
+
+// IngestServiceConfig holds the configuration for creating an IngestService.
+type IngestServiceConfig struct {
+	// === Core ===
+	IngestionMode string
+	//Models        *data.Models
+
+	// === Stellar Network ===
+	Network           string
+	NetworkPassphrase string
+	Archive           historyarchive.ArchiveInterface
+	RPCService        RPCService
+
+	// === Ledger Backend ===
+	LedgerBackend        ledgerbackend.LedgerBackend
+	LedgerBackendFactory LedgerBackendFactory
+
+	// === Cursors ===
+	LatestLedgerCursorName string
+	OldestLedgerCursorName string
+
+	// === Processing Options ===
+	GetLedgersLimit            int
+	SkipTxMeta                 bool
+	SkipTxEnvelope             bool
+	EnableParticipantFiltering bool
+
+	// === Backfill Tuning ===
+	BackfillWorkers           int
+	BackfillBatchSize         int
+	BackfillDBInsertBatchSize int
+	CatchupThreshold          int
+}
 
 type IngestService interface {
 	Run(ctx context.Context, startLedger uint32, endLedger uint32) error
@@ -23,28 +72,25 @@ type IngestService interface {
 var _ IngestService = (*ingestService)(nil)
 
 type ingestService struct {
-	rpcService        RPCService
-	ledgerBackend     ledgerbackend.LedgerBackend
-	networkPassphrase string
-	getLedgersLimit   int
-	ledgerIndexer     *indexer.Indexer
+	rpcService           RPCService
+	ledgerBackend        ledgerbackend.LedgerBackend
+	ledgerBackendFactory LedgerBackendFactory
+	networkPassphrase    string
+	getLedgersLimit      int
+	ledgerIndexer        *indexer.Indexer
 }
 
-func NewIngestService(
-	rpcService RPCService,
-	ledgerBackend ledgerbackend.LedgerBackend,
-	getLedgersLimit int,
-	networkPassphrase string,
-) (*ingestService, error) {
+func NewIngestService(cfg IngestServiceConfig) (*ingestService, error) {
 	// Create worker pool for the ledger indexer (parallel transaction processing within a ledger)
 	ledgerIndexerPool := pond.NewPool(0)
 
 	return &ingestService{
-		rpcService:        rpcService,
-		ledgerBackend:     ledgerBackend,
-		networkPassphrase: networkPassphrase,
-		getLedgersLimit:   getLedgersLimit,
-		ledgerIndexer:     indexer.NewIndexer(networkPassphrase, ledgerIndexerPool),
+		rpcService:           cfg.RPCService,
+		ledgerBackend:        cfg.LedgerBackend,
+		ledgerBackendFactory: cfg.LedgerBackendFactory,
+		networkPassphrase:    cfg.NetworkPassphrase,
+		getLedgersLimit:      cfg.GetLedgersLimit,
+		ledgerIndexer:        indexer.NewIndexer(cfg.NetworkPassphrase, ledgerIndexerPool, cfg.SkipTxMeta, cfg.SkipTxEnvelope),
 	}, nil
 }
 

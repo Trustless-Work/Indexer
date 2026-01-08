@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Trustless-Work/Indexer/internal/services"
+	"github.com/stellar/go-stellar-sdk/ingest/ledgerbackend"
 )
 
 // LedgerBackendType represents the type of ledger backend to use
@@ -20,12 +21,35 @@ const (
 )
 
 type Config struct {
-	StartLedger       uint32
-	EndLedger         uint32
-	RPCURL            string
-	NetworkPassphrase string
-	GetLedgersLimit   int
-	LedgerBackendType LedgerBackendType
+	IngestionMode          string
+	LatestLedgerCursorName string
+	OldestLedgerCursorName string
+	StartLedger            uint32
+	EndLedger              uint32
+	RPCURL                 string
+	Network                string
+	NetworkPassphrase      string
+	GetLedgersLimit        int
+	LedgerBackendType      LedgerBackendType
+	// SkipTxMeta skips storing transaction metadata (meta_xdr) to reduce storage space
+	SkipTxMeta bool
+	// SkipTxEnvelope skips storing transaction envelope (envelope_xdr) to reduce storage space
+	SkipTxEnvelope bool
+	// EnableParticipantFiltering controls whether to filter ingested data by pre-registered accounts.
+	// When false (default), all data is stored. When true, only data for pre-registered accounts is stored.
+	EnableParticipantFiltering bool
+	// BackfillWorkers limits concurrent batch processing during backfill.
+	// Defaults to runtime.NumCPU(). Lower values reduce RAM usage.
+	BackfillWorkers int
+	// BackfillBatchSize is the number of ledgers processed per batch during backfill.
+	// Defaults to 250. Lower values reduce RAM usage at cost of more DB transactions.
+	BackfillBatchSize int
+	// BackfillDBInsertBatchSize is the number of ledgers to process before flushing to DB.
+	// Defaults to 50. Lower values reduce RAM usage at cost of more DB transactions.
+	BackfillDBInsertBatchSize int
+	// CatchupThreshold is the number of ledgers behind network tip that triggers fast catchup.
+	// Defaults to 100.
+	CatchupThreshold int
 }
 
 func Ingest(cfg Config) error {
@@ -56,7 +80,29 @@ func setupDeps(cfg Config) (services.IngestService, error) {
 		return nil, fmt.Errorf("creating ledger backend: %w", err)
 	}
 
-	ingestService, err := services.NewIngestService(rpcService, ledgerBackend, cfg.GetLedgersLimit, cfg.NetworkPassphrase)
+	// Create a factory function for parallel backfill (each batch needs its own backend)
+	ledgerBackendFactory := func(ctx context.Context) (ledgerbackend.LedgerBackend, error) {
+		return NewLedgerBackend(ctx, cfg)
+	}
+
+	ingestService, err := services.NewIngestService((services.IngestServiceConfig{
+		IngestionMode:              cfg.IngestionMode,
+		LatestLedgerCursorName:     cfg.LatestLedgerCursorName,
+		OldestLedgerCursorName:     cfg.OldestLedgerCursorName,
+		RPCService:                 rpcService,
+		LedgerBackend:              ledgerBackend,
+		LedgerBackendFactory:       ledgerBackendFactory,
+		GetLedgersLimit:            cfg.GetLedgersLimit,
+		Network:                    cfg.Network,
+		NetworkPassphrase:          cfg.NetworkPassphrase,
+		SkipTxMeta:                 cfg.SkipTxMeta,
+		SkipTxEnvelope:             cfg.SkipTxEnvelope,
+		EnableParticipantFiltering: cfg.EnableParticipantFiltering,
+		BackfillWorkers:            cfg.BackfillWorkers,
+		BackfillBatchSize:          cfg.BackfillBatchSize,
+		BackfillDBInsertBatchSize:  cfg.BackfillDBInsertBatchSize,
+		CatchupThreshold:           cfg.CatchupThreshold,
+	}))
 	if err != nil {
 		return nil, fmt.Errorf("instantiating ingest service: %w", err)
 	}

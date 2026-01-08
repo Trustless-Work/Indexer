@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/Trustless-Work/Indexer/internal/ingest"
+	"github.com/stellar/go-stellar-sdk/support/log"
 )
 
 func main() {
@@ -19,6 +20,6 @@ func main() {
 	}
 	err := ingest.Ingest(cfg)
 	if err != nil {
-		fmt.Printf("running ingest: %w", err)
+		log.Fatalf("running ingest: %v", err)
 	}
 }
