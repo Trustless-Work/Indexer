@@ -12,5 +12,6 @@
 .idea
 
 # Binaries
-indexer
+/indexer
+/ingest
 bin/
