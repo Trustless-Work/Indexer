@@ -101,6 +101,7 @@ func (m *ingestService) Run(ctx context.Context, startLedger uint32, endLedger u
 	if err != nil {
 		return fmt.Errorf("preparing backend range: %w", err)
 	}
+
 	currentLedger := startLedger
 	log.Ctx(ctx).Infof("Starting ingestion loop from ledger: %d", currentLedger)
 	for endLedger == 0 || currentLedger < endLedger {
@@ -128,7 +129,7 @@ func (m *ingestService) Run(ctx context.Context, startLedger uint32, endLedger u
 }
 
 // prepareBackendRange prepares the ledger backend with the appropriate range type.
-// Returns the operating mode (live streaming vs backfill).
+// Returns the operating mode (livestreaming vs backfill).
 func (m *ingestService) prepareBackendRange(ctx context.Context, startLedger, endLedger uint32) error {
 	var ledgerRange ledgerbackend.Range
 	if endLedger == 0 {
@@ -164,6 +165,22 @@ func (m *ingestService) processLedger(ctx context.Context, ledgerMeta xdr.Ledger
 	if err != nil {
 		return fmt.Errorf("processing transactions for ledger %d: %w", ledgerSeq, err)
 	}
+
+	// Log detailed processing stats
+	numTxs := buffer.GetNumberOfTransactions()
+	numOps := buffer.GetNumberOfOperations()
+	numStateChanges := len(buffer.GetStateChanges())
+	numContractChanges := len(buffer.GetContractChanges())
+	numTrustlineChanges := len(buffer.GetTrustlineChanges())
+	numParticipants := len(buffer.GetAllParticipants())
+
+	log.Ctx(ctx).Infof("📊 Ledger %d Summary:", ledgerSeq)
+	log.Ctx(ctx).Infof("  ├─ Transactions: %d", numTxs)
+	log.Ctx(ctx).Infof("  ├─ Operations: %d", numOps)
+	log.Ctx(ctx).Infof("  ├─ State Changes: %d", numStateChanges)
+	log.Ctx(ctx).Infof("  ├─ Contract Changes: %d", numContractChanges)
+	log.Ctx(ctx).Infof("  ├─ Trustline Changes: %d", numTrustlineChanges)
+	log.Ctx(ctx).Infof("  └─ Unique Participants: %d", numParticipants)
 
 	// Phase 3: Insert all data into DB
 	//if err := m.ingestProcessedData(ctx, buffer); err != nil {
