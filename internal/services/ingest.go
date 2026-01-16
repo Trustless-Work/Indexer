@@ -166,22 +166,6 @@ func (m *ingestService) processLedger(ctx context.Context, ledgerMeta xdr.Ledger
 		return fmt.Errorf("processing transactions for ledger %d: %w", ledgerSeq, err)
 	}
 
-	// Log detailed processing stats
-	numTxs := buffer.GetNumberOfTransactions()
-	numOps := buffer.GetNumberOfOperations()
-	numStateChanges := len(buffer.GetStateChanges())
-	numContractChanges := len(buffer.GetContractChanges())
-	numTrustlineChanges := len(buffer.GetTrustlineChanges())
-	numParticipants := len(buffer.GetAllParticipants())
-
-	log.Ctx(ctx).Infof("📊 Ledger %d Summary:", ledgerSeq)
-	log.Ctx(ctx).Infof("  ├─ Transactions: %d", numTxs)
-	log.Ctx(ctx).Infof("  ├─ Operations: %d", numOps)
-	log.Ctx(ctx).Infof("  ├─ State Changes: %d", numStateChanges)
-	log.Ctx(ctx).Infof("  ├─ Contract Changes: %d", numContractChanges)
-	log.Ctx(ctx).Infof("  ├─ Trustline Changes: %d", numTrustlineChanges)
-	log.Ctx(ctx).Infof("  └─ Unique Participants: %d", numParticipants)
-
 	// Phase 3: Insert all data into DB
 	//if err := m.ingestProcessedData(ctx, buffer); err != nil {
 	//	return fmt.Errorf("ingesting processed data for ledger %d: %w", ledgerSeq, err)
