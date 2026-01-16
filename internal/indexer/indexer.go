@@ -69,11 +69,14 @@ func NewIndexer(networkPassphrase string, pool pond.Pool, skipTxMeta bool, skipT
 	return &Indexer{
 		participantsProcessor:  processors.NewParticipantsProcessor(networkPassphrase),
 		tokenTransferProcessor: processors.NewTokenTransferProcessor(networkPassphrase),
-		processors:             []OperationProcessorInterface{processors.NewContractDeployProcessor(networkPassphrase)},
-		pool:                   pool,
-		skipTxMeta:             skipTxMeta,
-		skipTxEnvelope:         skipTxEnvelope,
-		networkPassphrase:      networkPassphrase,
+		processors: []OperationProcessorInterface{
+			processors.NewContractDeployProcessor(networkPassphrase),
+			processors.NewEscrowProcessor(networkPassphrase),
+		},
+		pool:              pool,
+		skipTxMeta:        skipTxMeta,
+		skipTxEnvelope:    skipTxEnvelope,
+		networkPassphrase: networkPassphrase,
 	}
 }
 
@@ -129,7 +132,7 @@ func (i *Indexer) processTransaction(ctx context.Context, tx ingest.LedgerTransa
 	if err != nil {
 		return 0, fmt.Errorf("getting transaction participants: %w", err)
 	}
-	
+
 	// Get operations participants
 	opsParticipants, err := i.participantsProcessor.GetOperationsParticipants(tx)
 	if err != nil {

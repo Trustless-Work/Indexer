@@ -2,7 +2,6 @@ package processors
 
 import (
 	"context"
-	"encoding/hex"
 	"fmt"
 
 	"github.com/stellar/go-stellar-sdk/support/log"
@@ -55,16 +54,6 @@ func (p *ContractDeployProcessor) ProcessOperation(ctx context.Context, op *Tran
 
 		stateChange := builder.Clone().WithAccount(contractID).WithDeployer(deployerAddr).Build()
 		deployedContractsMap[contractID] = stateChange
-
-		log.Ctx(ctx).Infof(
-			"🚀 Contract Deployed - ContractID: %s | Deployer: %s | OpID: %d | Ledger: %d | TxHash: %s | Salt: %s",
-			contractID,
-			deployerAddr,
-			opID,
-			op.Transaction.Ledger.LedgerSequence(),
-			op.Transaction.Hash.HexString(),
-			hex.EncodeToString(fromAddr.Salt[:]),
-		)
 
 		return nil
 	}
