@@ -60,9 +60,12 @@ func (p *EscrowProcessor) ProcessOperation(ctx context.Context, op *TransactionO
 	case xdr.HostFunctionTypeHostFunctionTypeInvokeContract:
 		cc := hf.MustInvokeContract()
 
-		if cc.FunctionName == "tw_new_single_release_escrow" || cc.FunctionName == "tw_new_multi_release_escrow" {
-			log.Ctx(ctx).Infof("Escrow finned!!")
+		switch cc.FunctionName {
+		case "tw_new_single_release_escrow":
+			log.Ctx(ctx).Infof("Single Release Escrow Finned!")
 
+		case "tw_new_multi_release_escrow":
+			log.Ctx(ctx).Infof("Multi Release Escrow Finned!")
 		}
 
 	}
