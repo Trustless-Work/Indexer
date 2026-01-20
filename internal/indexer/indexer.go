@@ -7,6 +7,7 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/Trustless-Work/Indexer/internal/entities"
 	"github.com/Trustless-Work/Indexer/internal/indexer/processors"
 	"github.com/Trustless-Work/Indexer/internal/indexer/types"
 	"github.com/alitto/pond/v2"
@@ -14,6 +15,8 @@ import (
 
 	set "github.com/deckarep/golang-set/v2"
 	"github.com/stellar/go-stellar-sdk/ingest"
+
+	contract_processors "github.com/Trustless-Work/Indexer/internal/indexer/processors/contracts"
 )
 
 // isContractAddress determines if the given address is a contract address (C...) or account address (G...)
@@ -38,6 +41,8 @@ type IndexerBufferInterface interface {
 	GetContractChanges() []types.ContractChange
 	PushContractChange(contractChange types.ContractChange)
 	PushTrustlineChange(trustlineChange types.TrustlineChange)
+	PushEscrow(escrow entities.Escrow)
+	GetEscrows() []entities.Escrow
 	MergeBuffer(other IndexerBufferInterface)
 }
 
@@ -50,6 +55,11 @@ type ParticipantsProcessorInterface interface {
 	GetOperationsParticipants(transaction ingest.LedgerTransaction) (map[int64]processors.OperationParticipants, error)
 }
 
+type EscrowProcessorInterface interface {
+	ProcessTransaction(ctx context.Context, opWrapper *processors.TransactionOperationWrapper) ([]entities.Escrow, error)
+	Name() string
+}
+
 type OperationProcessorInterface interface {
 	ProcessOperation(ctx context.Context, opWrapper *processors.TransactionOperationWrapper) ([]types.StateChange, error)
 	Name() string
@@ -58,6 +68,7 @@ type OperationProcessorInterface interface {
 type Indexer struct {
 	participantsProcessor  ParticipantsProcessorInterface
 	tokenTransferProcessor TokenTransferProcessorInterface
+	escrowProcessor        EscrowProcessorInterface
 	processors             []OperationProcessorInterface
 	pool                   pond.Pool
 	skipTxMeta             bool
@@ -69,9 +80,10 @@ func NewIndexer(networkPassphrase string, pool pond.Pool, skipTxMeta bool, skipT
 	return &Indexer{
 		participantsProcessor:  processors.NewParticipantsProcessor(networkPassphrase),
 		tokenTransferProcessor: processors.NewTokenTransferProcessor(networkPassphrase),
+		escrowProcessor:        processors.NewEscrowProcessor(networkPassphrase),
 		processors: []OperationProcessorInterface{
-			processors.NewContractDeployProcessor(networkPassphrase),
-			processors.NewEscrowProcessor(networkPassphrase),
+			//processors.NewContractDeployProcessor(networkPassphrase),
+			contract_processors.NewSACEventsProcessor(networkPassphrase),
 		},
 		pool:              pool,
 		skipTxMeta:        skipTxMeta,
@@ -143,6 +155,21 @@ func (i *Indexer) processTransaction(ctx context.Context, tx ingest.LedgerTransa
 	stateChanges, err := i.getTransactionStateChanges(ctx, tx, opsParticipants)
 	if err != nil {
 		return 0, fmt.Errorf("getting transaction state changes: %w", err)
+	}
+
+	// Get escrows
+	escrows := []entities.Escrow{}
+	for _, opPartipants := range opsParticipants {
+		escrowProcessed, err := i.escrowProcessor.ProcessTransaction(ctx, opPartipants.OpWrapper)
+		if err != nil && !errors.Is(err, processors.ErrInvalidOpType) {
+			return 0, fmt.Errorf("processing escrow: %w", err)
+		}
+		escrows = append(escrows, escrowProcessed...)
+	}
+
+	// Insert escrows in buffer
+	for _, escrow := range escrows {
+		buffer.PushEscrow(escrow)
 	}
 
 	// Convert transaction data

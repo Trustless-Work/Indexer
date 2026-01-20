@@ -2,8 +2,10 @@ package processors
 
 import (
 	"context"
+	"fmt"
 
-	"github.com/Trustless-Work/Indexer/internal/indexer/types"
+	"github.com/Trustless-Work/Indexer/internal/entities"
+	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/support/log"
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
@@ -19,68 +21,63 @@ func NewEscrowProcessor(networkPassphrase string) *EscrowProcessor {
 	}
 }
 
-func (p *EscrowProcessor) Name() string {
-	return "initialize_escrow"
-}
-
-func (p *EscrowProcessor) ProcessOperation(ctx context.Context, op *TransactionOperationWrapper) ([]types.StateChange, error) {
+func (p *EscrowProcessor) ProcessTransaction(ctx context.Context, op *TransactionOperationWrapper) ([]entities.Escrow, error) {
 
 	if op.OperationType() != xdr.OperationTypeInvokeHostFunction {
 		log.Ctx(ctx).Debugf("ContractDeployProcessor: skipping operation type %s (not InvokeHostFunction)", op.OperationType().String())
 		return nil, ErrInvalidOpType
 	}
+
 	invokeHostOp := op.Operation.Body.MustInvokeHostFunctionOp()
-
-	//opID := op.ID()
-	//builder := NewStateChangeBuilder(op.Transaction.Ledger.LedgerSequence(), op.LedgerClosed.Unix(), op.Transaction.Hash.HexString(), op.TransactionID()).
-	//	WithOperationID(opID).
-	//	WithCategory(types.StateChangeCategoryAccount).
-	//	WithReason(types.StateChangeReasonCreate)
-
-	deployedContractsMap := map[string]types.StateChange{}
-
-	//processCreate := func(fromAddr xdr.ContractIdPreimageFromAddress) error {
-	//	contractID, err := calculateContractID(p.networkPassphrase, fromAddr)
-	//	if err != nil {
-	//		return fmt.Errorf("calculating contract ID: %w", err)
-	//	}
-	//	deployerAddr, err := fromAddr.Address.String()
-	//	if err != nil {
-	//		return fmt.Errorf("deployer address to string: %w", err)
-	//	}
-	//
-	//	stateChange := builder.Clone().WithAccount(contractID).WithDeployer(deployerAddr).Build()
-	//	deployedContractsMap[contractID] = stateChange
-	//
-	//	return nil
-	//}
-
-	hf := invokeHostOp.HostFunction
-	switch hf.Type {
-	case xdr.HostFunctionTypeHostFunctionTypeInvokeContract:
-		cc := hf.MustInvokeContract()
-
-		switch cc.FunctionName {
-		case "tw_new_single_release_escrow":
-			log.Ctx(ctx).Infof("Single Release Escrow Finned!")
-
-		case "tw_new_multi_release_escrow":
-			log.Ctx(ctx).Infof("Multi Release Escrow Finned!")
-		}
-
+	if invokeHostOp.HostFunction.Type != xdr.HostFunctionTypeHostFunctionTypeInvokeContract {
+		return nil, nil
 	}
 
-	stateChanges := make([]types.StateChange, 0, len(deployedContractsMap))
-	for _, sc := range deployedContractsMap {
-		stateChanges = append(stateChanges, sc)
+	invokeArgs := invokeHostOp.HostFunction.MustInvokeContract()
+	functionName := invokeArgs.FunctionName
+
+	// Extraer el contract ID del factory
+	factoryContractID, err := p.getContractIDFromAddress(invokeArgs.ContractAddress)
+	if err != nil {
+		return nil, fmt.Errorf("extracting factory contract ID: %w", err)
 	}
 
-	if len(stateChanges) > 0 {
-		contractIDs := make([]string, 0, len(stateChanges))
-		for contractID := range deployedContractsMap {
-			contractIDs = append(contractIDs, contractID)
-		}
+	//logger := log.Ctx(ctx).WithField("factory_contract", factoryContractID).WithField("function", functionName)
+
+	// Procesar según la función
+	switch functionName {
+	case "tw_new_single_release_escrow":
+		//return p.processSingleReleaseEscrow(ctx, logger, op, factoryContractID, invokeArgs.Args)
+		log.Ctx(ctx).Infof("Single Release Escrow Finned!")
+		log.Ctx(ctx).Infof("Factory Contract ID: %s", factoryContractID)
+		log.Ctx(ctx).Infof("Escrow Args: %v", invokeArgs.Args)
+
+		// TODO: Implementar el parseo de un slice a una estructura
+
+	case "tw_new_multi_release_escrow":
+		//return p.processMultiReleaseEscrow(ctx, logger, op, factoryContractID, invokeArgs.Args)
+		log.Ctx(ctx).Infof("Multi Release Escrow Finned!")
+		log.Ctx(ctx).Infof("Factory Contract ID: %s", factoryContractID)
+
+		// TODO: Implementar el parseo de un slice a una estructura
+
+	default:
+		// No es una función que nos interese
+		return nil, nil
 	}
 
-	return stateChanges, nil
+	return nil, nil
+}
+
+func (p *EscrowProcessor) Name() string {
+	return "initialize_escrow"
+}
+
+func (p *EscrowProcessor) getContractIDFromAddress(addr xdr.ScAddress) (string, error) {
+	if addr.Type != xdr.ScAddressTypeScAddressTypeContract {
+		return "", fmt.Errorf("not a contract address")
+	}
+
+	contractHash := addr.MustContractId()
+	return strkey.Encode(strkey.VersionByteContract, contractHash[:])
 }

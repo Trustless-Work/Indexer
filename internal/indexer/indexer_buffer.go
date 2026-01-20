@@ -4,6 +4,7 @@ import (
 	"maps"
 	"sync"
 
+	"github.com/Trustless-Work/Indexer/internal/entities"
 	"github.com/Trustless-Work/Indexer/internal/indexer/types"
 	set "github.com/deckarep/golang-set/v2"
 )
@@ -46,6 +47,7 @@ type IndexerBuffer struct {
 	trustlineChanges     []types.TrustlineChange
 	contractChanges      []types.ContractChange
 	allParticipants      set.Set[string]
+	escrows              []entities.Escrow
 }
 
 // NewIndexerBuffer creates a new IndexerBuffer with initialized data structures.
@@ -60,6 +62,7 @@ func NewIndexerBuffer() *IndexerBuffer {
 		trustlineChanges:     make([]types.TrustlineChange, 0),
 		contractChanges:      make([]types.ContractChange, 0),
 		allParticipants:      set.NewSet[string](),
+		escrows:              make([]entities.Escrow, 0),
 	}
 }
 
@@ -256,6 +259,24 @@ func (b *IndexerBuffer) GetStateChanges() []types.StateChange {
 	return b.stateChanges
 }
 
+// PushEscrow adds an escrow change to the buffer.
+// Thread-safe: acquires write lock.
+func (b *IndexerBuffer) PushEscrow(escrow entities.Escrow) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	b.escrows = append(b.escrows, escrow)
+}
+
+// GetEscrows returns all escrows stored in the buffer.
+// Thread-safe: uses read lock.
+func (b *IndexerBuffer) GetEscrows() []entities.Escrow {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	return b.escrows
+}
+
 // MergeBuffer merges another IndexerBuffer into this buffer. This is used to combine
 // per-ledger or per-transaction buffers into a single buffer for batch DB insertion.
 //
@@ -321,6 +342,9 @@ func (b *IndexerBuffer) MergeBuffer(other IndexerBufferInterface) {
 
 	// Merge contract changes
 	b.contractChanges = append(b.contractChanges, otherBuffer.contractChanges...)
+
+	// Merge escrows
+	b.escrows = append(b.escrows, otherBuffer.escrows...)
 
 	// Merge all participants
 	for participant := range otherBuffer.allParticipants.Iter() {

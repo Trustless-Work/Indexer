@@ -135,12 +135,6 @@ func (p *ContractDeployProcessor) ProcessOperation(ctx context.Context, op *Tran
 		for contractID := range deployedContractsMap {
 			contractIDs = append(contractIDs, contractID)
 		}
-		log.Infof("📊 ContractDeployProcessor Summary - OpID: %d | TxHash: %s | Total Contracts: %d | IDs: %v",
-			opID,
-			op.Transaction.Hash.HexString(),
-			len(stateChanges),
-			contractIDs,
-		)
 	}
 
 	return stateChanges, nil
