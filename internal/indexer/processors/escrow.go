@@ -21,6 +21,10 @@ func NewEscrowProcessor(networkPassphrase string) *EscrowProcessor {
 	}
 }
 
+func (p *EscrowProcessor) Name() string {
+	return "initialize_escrow"
+}
+
 func (p *EscrowProcessor) ProcessTransaction(ctx context.Context, op *TransactionOperationWrapper) ([]entities.Escrow, error) {
 
 	if op.OperationType() != xdr.OperationTypeInvokeHostFunction {
@@ -47,12 +51,14 @@ func (p *EscrowProcessor) ProcessTransaction(ctx context.Context, op *Transactio
 	// Procesar según la función
 	switch functionName {
 	case "tw_new_single_release_escrow":
-		escrow, err := ParseSingleReleaseEscrowArgs(invokeArgs.Args, factoryContractID)
+		escrow, err := ParseSingleReleaseEscrowArgs(invokeArgs.Args, factoryContractID, p.networkPassphrase)
 		if err != nil {
 			return nil, fmt.Errorf("parsing single release escrow: %w", err)
 		}
 
 		log.Ctx(ctx).Infof("Single Release Escrow parsed successfully!")
+		log.Ctx(ctx).Infof("Contract ID (predicted): %s", escrow.ContractID)
+		log.Ctx(ctx).Infof("Deployer: %s", escrow.Deployer)
 		log.Ctx(ctx).Infof("Factory Contract: %s", escrow.FactoryContract)
 		log.Ctx(ctx).Infof("Title: %s", escrow.Title)
 		log.Ctx(ctx).Infof("Description: %s", escrow.Description)
@@ -60,9 +66,9 @@ func (p *EscrowProcessor) ProcessTransaction(ctx context.Context, op *Transactio
 		log.Ctx(ctx).Infof("EngagementID: %s", escrow.EngagementID)
 		log.Ctx(ctx).Infof("ServiceProvider: %s", escrow.Roles.ServiceProvider)
 		log.Ctx(ctx).Infof("Receiver: %s", escrow.Roles.Receiver)
-		log.Ctx(ctx).Infof("Milestones: %s", escrow.Milestones[0].Description)
-
-		log.Ctx(ctx).Infof("Args: %v", escrow)
+		if len(escrow.Milestones) > 0 {
+			log.Ctx(ctx).Infof("Milestones[0]: %s", escrow.Milestones[0].Description)
+		}
 
 		return []entities.Escrow{*escrow}, nil
 
@@ -75,10 +81,6 @@ func (p *EscrowProcessor) ProcessTransaction(ctx context.Context, op *Transactio
 		// No es una función que nos interese
 		return nil, nil
 	}
-}
-
-func (p *EscrowProcessor) Name() string {
-	return "initialize_escrow"
 }
 
 func (p *EscrowProcessor) getContractIDFromAddress(addr xdr.ScAddress) (string, error) {

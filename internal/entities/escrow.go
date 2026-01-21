@@ -1,6 +1,8 @@
 package entities
 
 type Escrow struct {
+	ContractID       string
+	Deployer         string
 	FactoryContract  string
 	DeployerSalt     string
 	WasmHash         string

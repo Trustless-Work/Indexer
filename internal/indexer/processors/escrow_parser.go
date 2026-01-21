@@ -10,13 +10,13 @@ import (
 
 // ParseSingleReleaseEscrowArgs parses the arguments from tw_new_single_release_escrow
 // Args structure:
-// [0] deployer (Address) - not stored in Escrow entity
+// [0] deployer (Address)
 // [1] wasm_hash (BytesN<32>)
 // [2] salt (BytesN<32>)
 // [3] init_fn (Symbol)
 // [4] init_args (Vec<Val>) - contains escrow data
 // [5] constructor_args (Vec<Val>) - empty
-func ParseSingleReleaseEscrowArgs(args []xdr.ScVal, factoryContract string) (*entities.Escrow, error) {
+func ParseSingleReleaseEscrowArgs(args []xdr.ScVal, factoryContract string, networkPassphrase string) (*entities.Escrow, error) {
 	if len(args) < 5 {
 		return nil, fmt.Errorf("insufficient arguments: expected at least 5, got %d", len(args))
 	}
@@ -25,6 +25,17 @@ func ParseSingleReleaseEscrowArgs(args []xdr.ScVal, factoryContract string) (*en
 		FactoryContract: factoryContract,
 	}
 
+	// Parse deployer address (Args[0])
+	deployerAddr, err := extractScAddressFromScVal(args[0])
+	if err != nil {
+		return nil, fmt.Errorf("parsing deployer address: %w", err)
+	}
+	deployerStr, err := deployerAddr.String()
+	if err != nil {
+		return nil, fmt.Errorf("converting deployer to string: %w", err)
+	}
+	escrow.Deployer = deployerStr
+
 	// Parse wasm_hash (Args[1])
 	wasmHash, err := extractBytesFromScVal(args[1])
 	if err != nil {
@@ -32,12 +43,19 @@ func ParseSingleReleaseEscrowArgs(args []xdr.ScVal, factoryContract string) (*en
 	}
 	escrow.WasmHash = wasmHash
 
-	// Parse salt (Args[2])
-	salt, err := extractBytesFromScVal(args[2])
+	// Parse salt (Args[2]) - need raw bytes for contract ID calculation
+	saltBytes, err := extractRawBytesFromScVal(args[2])
 	if err != nil {
 		return nil, fmt.Errorf("parsing salt: %w", err)
 	}
-	escrow.DeployerSalt = salt
+	escrow.DeployerSalt = hex.EncodeToString(saltBytes)
+
+	// Calculate contract ID from deployer + salt + network
+	contractID, err := deriveContractID(networkPassphrase, deployerAddr, saltBytes)
+	if err != nil {
+		return nil, fmt.Errorf("calculating contract ID: %w", err)
+	}
+	escrow.ContractID = contractID
 
 	// Parse init_fn (Args[3])
 	initFn, err := extractSymbolFromScVal(args[3])
@@ -62,6 +80,43 @@ func ParseSingleReleaseEscrowArgs(args []xdr.ScVal, factoryContract string) (*en
 	}
 
 	return escrow, nil
+}
+
+// deriveContractID calculates the contract ID from deployer address and salt
+func deriveContractID(networkPassphrase string, deployerAddr xdr.ScAddress, salt []byte) (string, error) {
+	// Convert salt to Uint256
+	var saltUint256 xdr.Uint256
+	if len(salt) != 32 {
+		return "", fmt.Errorf("salt must be 32 bytes, got %d", len(salt))
+	}
+	copy(saltUint256[:], salt)
+
+	// Create the preimage
+	fromAddress := xdr.ContractIdPreimageFromAddress{
+		Address: deployerAddr,
+		Salt:    saltUint256,
+	}
+
+	// Use the existing calculateContractID function
+	return calculateContractID(networkPassphrase, fromAddress)
+}
+
+// extractScAddressFromScVal extracts an xdr.ScAddress from a ScVal
+func extractScAddressFromScVal(val xdr.ScVal) (xdr.ScAddress, error) {
+	addr, ok := val.GetAddress()
+	if !ok {
+		return xdr.ScAddress{}, fmt.Errorf("invalid address")
+	}
+	return addr, nil
+}
+
+// extractRawBytesFromScVal extracts raw bytes from a ScVal
+func extractRawBytesFromScVal(val xdr.ScVal) ([]byte, error) {
+	bytes, ok := val.GetBytes()
+	if !ok {
+		return nil, fmt.Errorf("invalid bytes")
+	}
+	return bytes, nil
 }
 
 // parseEscrowData parses the escrow map and populates the Escrow entity
