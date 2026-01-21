@@ -82,6 +82,75 @@ func ParseSingleReleaseEscrowArgs(args []xdr.ScVal, factoryContract string, netw
 	return escrow, nil
 }
 
+func ParseMultiReleaseEscrowArgs(args []xdr.ScVal, factoryContract string, networkPassphrase string) (*entities.Escrow, error) {
+
+	if len(args) < 5 {
+		return nil, fmt.Errorf("insufficient arguments: expected at least 5, got %d", len(args))
+	}
+
+	escrow := &entities.Escrow{
+		FactoryContract: factoryContract,
+	}
+
+	// Parse deployer address (Args[0])
+	deployerAddr, err := extractScAddressFromScVal(args[0])
+	if err != nil {
+		return nil, fmt.Errorf("parsing deployer address: %w", err)
+	}
+	deployerStr, err := deployerAddr.String()
+	if err != nil {
+		return nil, fmt.Errorf("converting deployer to string: %w", err)
+	}
+	escrow.Deployer = deployerStr
+
+	// Parse wasm_hash (Args[1])
+	wasmHash, err := extractBytesFromScVal(args[1])
+	if err != nil {
+		return nil, fmt.Errorf("parsing wasm_hash: %w", err)
+	}
+	escrow.WasmHash = wasmHash
+
+	// Parse salt (Args[2]) - need raw bytes for contract ID calculation
+	saltBytes, err := extractRawBytesFromScVal(args[2])
+	if err != nil {
+		return nil, fmt.Errorf("parsing salt: %w", err)
+	}
+	escrow.DeployerSalt = hex.EncodeToString(saltBytes)
+
+	// Calculate contract ID from deployer + salt + network
+	contractID, err := deriveContractID(networkPassphrase, deployerAddr, saltBytes)
+	if err != nil {
+		return nil, fmt.Errorf("calculating contract ID: %w", err)
+	}
+	escrow.ContractID = contractID
+
+	// Parse init_fn (Args[3])
+	initFn, err := extractSymbolFromScVal(args[3])
+	if err != nil {
+		return nil, fmt.Errorf("parsing init_fn: %w", err)
+	}
+	escrow.InitFunction = initFn
+
+	// Parse init_args (Args[4]) - contains the escrow data
+	initArgsVec, err := extractVecFromScVal(args[4])
+	if err != nil {
+		return nil, fmt.Errorf("parsing init_args: %w", err)
+	}
+
+	if len(initArgsVec) == 0 {
+		return nil, fmt.Errorf("init_args is empty")
+	}
+
+	// The escrow data is the first element of init_args
+	// TODO: Modificar la logica para que pueda parsear escrows de tipo multi release.
+	if err := parseEscrowData(initArgsVec[0], escrow); err != nil {
+		return nil, fmt.Errorf("parsing escrow data: %w", err)
+	}
+
+	return escrow, nil
+
+}
+
 // deriveContractID calculates the contract ID from deployer address and salt
 func deriveContractID(networkPassphrase string, deployerAddr xdr.ScAddress, salt []byte) (string, error) {
 	// Convert salt to Uint256

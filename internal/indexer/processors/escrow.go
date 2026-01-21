@@ -75,6 +75,7 @@ func (p *EscrowProcessor) ProcessTransaction(ctx context.Context, op *Transactio
 	case "tw_new_multi_release_escrow":
 		// TODO: Implementar parser para multi release escrow
 		log.Ctx(ctx).Infof("Multi Release Escrow detected - not yet implemented")
+		log.Ctx(ctx).Infof("Multi Release Args: %v", invokeArgs.Args)
 		return nil, nil
 
 	default:
