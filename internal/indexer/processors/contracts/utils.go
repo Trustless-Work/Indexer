@@ -133,3 +133,56 @@ func findInMap(entries []xdr.ScMapEntry, key string) (xdr.ScVal, bool) {
 	}
 	return xdr.ScVal{}, false
 }
+
+// extractSymbolOrStringFromScVal extracts a value that can be either a symbol or a string
+func extractSymbolOrStringFromScVal(val xdr.ScVal) (string, error) {
+	// Try symbol first
+	if sym, ok := val.GetSym(); ok {
+		return string(sym), nil
+	}
+
+	// Try string
+	if str, ok := val.GetStr(); ok {
+		return string(str), nil
+	}
+
+	return "", fmt.Errorf("value is neither symbol nor string")
+}
+
+// extractStringOrNumberFromScVal extracts a value that can be either a string or a number
+func extractStringOrNumberFromScVal(val xdr.ScVal) (string, error) {
+	// Try string first
+	if str, ok := val.GetStr(); ok {
+		return string(str), nil
+	}
+
+	// Try u32
+	if u32, ok := val.GetU32(); ok {
+		return fmt.Sprintf("%d", u32), nil
+	}
+
+	// Try i32
+	if i32, ok := val.GetI32(); ok {
+		return fmt.Sprintf("%d", i32), nil
+	}
+
+	// Try u64
+	if u64, ok := val.GetU64(); ok {
+		return fmt.Sprintf("%d", u64), nil
+	}
+
+	// Try i64
+	if i64, ok := val.GetI64(); ok {
+		return fmt.Sprintf("%d", i64), nil
+	}
+
+	// Try i128
+	if i128, ok := val.GetI128(); ok {
+		if i128.Hi == 0 {
+			return fmt.Sprintf("%d", i128.Lo), nil
+		}
+		return fmt.Sprintf("%d%d", i128.Hi, i128.Lo), nil
+	}
+
+	return "", fmt.Errorf("value is neither string nor number")
+}

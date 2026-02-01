@@ -43,7 +43,7 @@ func (p *ContractDeployProcessor) ProcessOperation(ctx context.Context, op *Tran
 	deployedContractsMap := map[string]types.StateChange{}
 
 	processCreate := func(fromAddr xdr.ContractIdPreimageFromAddress) error {
-		contractID, err := calculateContractID(p.networkPassphrase, fromAddr)
+		contractID, err := CalculateContractID(p.networkPassphrase, fromAddr)
 		if err != nil {
 			return fmt.Errorf("calculating contract ID: %w", err)
 		}
@@ -111,12 +111,6 @@ func (p *ContractDeployProcessor) ProcessOperation(ctx context.Context, op *Tran
 	case xdr.HostFunctionTypeHostFunctionTypeInvokeContract:
 		cc := hf.MustInvokeContract()
 		log.Ctx(ctx).Infof("Args: %v", cc.Args)
-		// TODO: Hacer una correcta impresion de los Args de nuestros escrows.
-		// TODO: Crear los structs correspondientes a los Escrows.
-		// TODO: Almacenar los Escrows que se vayan encontrando.
-
-		//log.Ctx(ctx).Debugf("InvokeHostFunction type: InvokeContract (OpID: %d)", opID)
-
 	}
 
 	for _, auth := range invokeHostOp.Auth {

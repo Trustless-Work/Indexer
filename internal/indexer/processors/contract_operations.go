@@ -17,10 +17,10 @@ var (
 	ErrInvalidOpType       = errors.New("invalid operation type")
 )
 
-// calculateContractID calculates the contract ID for a wallet creation transaction based on the network passphrase, deployer account and salt.
+// CalculateContractID calculates the contract ID for a wallet creation transaction based on the network passphrase, deployer account and salt.
 //
 // More info: https://developers.stellar.org/docs/build/smart-contracts/example-contracts/deployer#how-it-works
-func calculateContractID(networkPassphrase string, fromAddress xdr.ContractIdPreimageFromAddress) (string, error) {
+func CalculateContractID(networkPassphrase string, fromAddress xdr.ContractIdPreimageFromAddress) (string, error) {
 	networkHash := xdr.Hash(sha256.Sum256([]byte(networkPassphrase)))
 
 	hashIDPreimage := xdr.HashIdPreimage{
@@ -200,7 +200,7 @@ func participantsForSorobanOp(op *TransactionOperationWrapper) (set.Set[string],
 func contractIDsForPreimage(networkPassphrase string, preimage xdr.ContractIdPreimage) (set.Set[string], error) {
 	switch preimage.Type {
 	case xdr.ContractIdPreimageTypeContractIdPreimageFromAddress:
-		contractID, err := calculateContractID(networkPassphrase, preimage.MustFromAddress())
+		contractID, err := CalculateContractID(networkPassphrase, preimage.MustFromAddress())
 		if err != nil {
 			return nil, fmt.Errorf("calculating contract ID: %w", err)
 		}

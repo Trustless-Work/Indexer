@@ -1,10 +1,11 @@
-package processors
+package contracts
 
 import (
 	"encoding/hex"
 	"fmt"
 
 	"github.com/Trustless-Work/Indexer/internal/entities"
+	"github.com/Trustless-Work/Indexer/internal/indexer/processors"
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
@@ -17,80 +18,24 @@ import (
 // [4] init_args (Vec<Val>) - contains escrow data
 // [5] constructor_args (Vec<Val>) - empty
 func ParseSingleReleaseEscrowArgs(args []xdr.ScVal, factoryContract string, networkPassphrase string) (*entities.Escrow, error) {
-	if len(args) < 5 {
-		return nil, fmt.Errorf("insufficient arguments: expected at least 5, got %d", len(args))
-	}
-
-	escrow := &entities.Escrow{
-		FactoryContract: factoryContract,
-		EscrowType:      entities.EscrowTypeSingleRelease,
-	}
-
-	// Parse deployer address (Args[0])
-	deployerAddr, err := extractScAddressFromScVal(args[0])
-	if err != nil {
-		return nil, fmt.Errorf("parsing deployer address: %w", err)
-	}
-	deployerStr, err := deployerAddr.String()
-	if err != nil {
-		return nil, fmt.Errorf("converting deployer to string: %w", err)
-	}
-	escrow.Deployer = deployerStr
-
-	// Parse wasm_hash (Args[1])
-	wasmHash, err := extractBytesFromScVal(args[1])
-	if err != nil {
-		return nil, fmt.Errorf("parsing wasm_hash: %w", err)
-	}
-	escrow.WasmHash = wasmHash
-
-	// Parse salt (Args[2]) - need raw bytes for contract ID calculation
-	saltBytes, err := extractRawBytesFromScVal(args[2])
-	if err != nil {
-		return nil, fmt.Errorf("parsing salt: %w", err)
-	}
-	escrow.DeployerSalt = hex.EncodeToString(saltBytes)
-
-	// Calculate contract ID from deployer + salt + network
-	contractID, err := deriveContractID(networkPassphrase, deployerAddr, saltBytes)
-	if err != nil {
-		return nil, fmt.Errorf("calculating contract ID: %w", err)
-	}
-	escrow.ContractID = contractID
-
-	// Parse init_fn (Args[3])
-	initFn, err := extractSymbolFromScVal(args[3])
-	if err != nil {
-		return nil, fmt.Errorf("parsing init_fn: %w", err)
-	}
-	escrow.InitFunction = initFn
-
-	// Parse init_args (Args[4]) - contains the escrow data
-	initArgsVec, err := extractVecFromScVal(args[4])
-	if err != nil {
-		return nil, fmt.Errorf("parsing init_args: %w", err)
-	}
-
-	if len(initArgsVec) == 0 {
-		return nil, fmt.Errorf("init_args is empty")
-	}
-
-	// The escrow data is the first element of init_args
-	if err := parseEscrowData(initArgsVec[0], escrow); err != nil {
-		return nil, fmt.Errorf("parsing escrow data: %w", err)
-	}
-
-	return escrow, nil
+	return parseEscrowArgs(args, factoryContract, networkPassphrase, entities.EscrowTypeSingleRelease)
 }
 
+// ParseMultiReleaseEscrowArgs parses the arguments from tw_new_multi_release_escrow
+// Args structure is identical to single release
 func ParseMultiReleaseEscrowArgs(args []xdr.ScVal, factoryContract string, networkPassphrase string) (*entities.Escrow, error) {
+	return parseEscrowArgs(args, factoryContract, networkPassphrase, entities.EscrowTypeMultiRelease)
+}
+
+// parseEscrowArgs is the common function that parses escrow arguments for both single and multi release types
+func parseEscrowArgs(args []xdr.ScVal, factoryContract string, networkPassphrase string, escrowType entities.EscrowType) (*entities.Escrow, error) {
 	if len(args) < 5 {
 		return nil, fmt.Errorf("insufficient arguments: expected at least 5, got %d", len(args))
 	}
 
 	escrow := &entities.Escrow{
 		FactoryContract: factoryContract,
-		EscrowType:      entities.EscrowTypeMultiRelease,
+		EscrowType:      escrowType,
 	}
 
 	// Parse deployer address (Args[0])
@@ -143,13 +88,11 @@ func ParseMultiReleaseEscrowArgs(args []xdr.ScVal, factoryContract string, netwo
 	}
 
 	// The escrow data is the first element of init_args
-	// TODO: Modificar la logica para que pueda parsear escrows de tipo multi release.
 	if err := parseEscrowData(initArgsVec[0], escrow); err != nil {
 		return nil, fmt.Errorf("parsing escrow data: %w", err)
 	}
 
 	return escrow, nil
-
 }
 
 // deriveContractID calculates the contract ID from deployer address and salt
@@ -168,7 +111,7 @@ func deriveContractID(networkPassphrase string, deployerAddr xdr.ScAddress, salt
 	}
 
 	// Use the existing calculateContractID function
-	return calculateContractID(networkPassphrase, fromAddress)
+	return processors.CalculateContractID(networkPassphrase, fromAddress)
 }
 
 // extractScAddressFromScVal extracts an xdr.ScAddress from a ScVal
@@ -531,170 +474,4 @@ func parseTrustlineAddress(val xdr.ScVal) (string, error) {
 
 	// Empty or null trustline
 	return "", nil
-}
-
-// --- XDR ScVal extraction utilities ---
-
-// extractAddressFromScVal extracts a string representation of an address from a ScVal
-func extractAddressFromScVal(val xdr.ScVal) (string, error) {
-	addr, ok := val.GetAddress()
-	if !ok {
-		return "", fmt.Errorf("invalid address")
-	}
-	addrStr, err := addr.String()
-	if err != nil {
-		return "", fmt.Errorf("failed to convert address to string: %w", err)
-	}
-	return addrStr, nil
-}
-
-// extractBytesFromScVal extracts bytes from a ScVal and returns it as a hex string
-func extractBytesFromScVal(val xdr.ScVal) (string, error) {
-	bytes, ok := val.GetBytes()
-	if !ok {
-		return "", fmt.Errorf("invalid bytes")
-	}
-	return hex.EncodeToString(bytes), nil
-}
-
-// extractSymbolFromScVal extracts a symbol from a ScVal
-func extractSymbolFromScVal(val xdr.ScVal) (string, error) {
-	sym, ok := val.GetSym()
-	if !ok {
-		return "", fmt.Errorf("invalid symbol")
-	}
-	return string(sym), nil
-}
-
-// extractSymbolOrStringFromScVal extracts a value that can be either a symbol or a string
-func extractSymbolOrStringFromScVal(val xdr.ScVal) (string, error) {
-	// Try symbol first
-	if sym, ok := val.GetSym(); ok {
-		return string(sym), nil
-	}
-
-	// Try string
-	if str, ok := val.GetStr(); ok {
-		return string(str), nil
-	}
-
-	return "", fmt.Errorf("value is neither symbol nor string")
-}
-
-// extractStringFromScVal extracts a string from a ScVal
-func extractStringFromScVal(val xdr.ScVal) (string, error) {
-	str, ok := val.GetStr()
-	if !ok {
-		return "", fmt.Errorf("invalid string")
-	}
-	return string(str), nil
-}
-
-// extractStringOrNumberFromScVal extracts a value that can be either a string or a number
-func extractStringOrNumberFromScVal(val xdr.ScVal) (string, error) {
-	// Try string first
-	if str, ok := val.GetStr(); ok {
-		return string(str), nil
-	}
-
-	// Try u32
-	if u32, ok := val.GetU32(); ok {
-		return fmt.Sprintf("%d", u32), nil
-	}
-
-	// Try i32
-	if i32, ok := val.GetI32(); ok {
-		return fmt.Sprintf("%d", i32), nil
-	}
-
-	// Try u64
-	if u64, ok := val.GetU64(); ok {
-		return fmt.Sprintf("%d", u64), nil
-	}
-
-	// Try i64
-	if i64, ok := val.GetI64(); ok {
-		return fmt.Sprintf("%d", i64), nil
-	}
-
-	// Try i128
-	if i128, ok := val.GetI128(); ok {
-		if i128.Hi == 0 {
-			return fmt.Sprintf("%d", i128.Lo), nil
-		}
-		return fmt.Sprintf("%d%d", i128.Hi, i128.Lo), nil
-	}
-
-	return "", fmt.Errorf("value is neither string nor number")
-}
-
-// extractI128FromScVal extracts an i128 from a ScVal and converts it to uint64
-func extractI128FromScVal(val xdr.ScVal) (uint64, error) {
-	i128, ok := val.GetI128()
-	if !ok {
-		return 0, fmt.Errorf("invalid i128")
-	}
-	if i128.Hi < 0 {
-		return 0, fmt.Errorf("negative i128 value")
-	}
-	if i128.Hi > 0 {
-		return 0, fmt.Errorf("i128 overflow: value exceeds uint64")
-	}
-	return uint64(i128.Lo), nil
-}
-
-// extractU32FromScVal extracts a u32 from a ScVal
-func extractU32FromScVal(val xdr.ScVal) (uint32, error) {
-	u32, ok := val.GetU32()
-	if !ok {
-		return 0, fmt.Errorf("invalid u32")
-	}
-	return uint32(u32), nil
-}
-
-// extractBoolFromScVal extracts a bool from a ScVal
-func extractBoolFromScVal(val xdr.ScVal) (bool, error) {
-	b, ok := val.GetB()
-	if !ok {
-		return false, fmt.Errorf("invalid bool")
-	}
-	return b, nil
-}
-
-// extractVecFromScVal extracts a vector from a ScVal
-func extractVecFromScVal(val xdr.ScVal) ([]xdr.ScVal, error) {
-	vec, ok := val.GetVec()
-	if !ok {
-		return nil, fmt.Errorf("invalid vec")
-	}
-	if vec == nil {
-		return []xdr.ScVal{}, nil
-	}
-	return *vec, nil
-}
-
-// extractMapFromScVal extracts a map from a ScVal
-func extractMapFromScVal(val xdr.ScVal) ([]xdr.ScMapEntry, error) {
-	m, ok := val.GetMap()
-	if !ok {
-		return nil, fmt.Errorf("invalid map")
-	}
-	if m == nil {
-		return []xdr.ScMapEntry{}, nil
-	}
-	return *m, nil
-}
-
-// findInMap searches for a key in a map and returns the corresponding value
-func findInMap(entries []xdr.ScMapEntry, key string) (xdr.ScVal, bool) {
-	for _, entry := range entries {
-		sym, ok := entry.Key.GetSym()
-		if !ok {
-			continue
-		}
-		if string(sym) == key {
-			return entry.Val, true
-		}
-	}
-	return xdr.ScVal{}, false
 }

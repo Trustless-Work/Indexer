@@ -80,9 +80,9 @@ func NewIndexer(networkPassphrase string, pool pond.Pool, skipTxMeta bool, skipT
 	return &Indexer{
 		participantsProcessor:  processors.NewParticipantsProcessor(networkPassphrase),
 		tokenTransferProcessor: processors.NewTokenTransferProcessor(networkPassphrase),
-		escrowProcessor:        processors.NewEscrowProcessor(networkPassphrase),
+		escrowProcessor:        contract_processors.NewEscrowProcessor(networkPassphrase),
 		processors: []OperationProcessorInterface{
-			//processors.NewContractDeployProcessor(networkPassphrase),
+			processors.NewContractDeployProcessor(networkPassphrase),
 			contract_processors.NewSACEventsProcessor(networkPassphrase),
 		},
 		pool:              pool,

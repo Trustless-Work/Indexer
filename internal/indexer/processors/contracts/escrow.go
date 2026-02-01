@@ -1,10 +1,11 @@
-package processors
+package contracts
 
 import (
 	"context"
 	"fmt"
 
 	"github.com/Trustless-Work/Indexer/internal/entities"
+	"github.com/Trustless-Work/Indexer/internal/indexer/processors"
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/support/log"
 	"github.com/stellar/go-stellar-sdk/xdr"
@@ -25,11 +26,11 @@ func (p *EscrowProcessor) Name() string {
 	return "initialize_escrow"
 }
 
-func (p *EscrowProcessor) ProcessTransaction(ctx context.Context, op *TransactionOperationWrapper) ([]entities.Escrow, error) {
+func (p *EscrowProcessor) ProcessTransaction(ctx context.Context, op *processors.TransactionOperationWrapper) ([]entities.Escrow, error) {
 
 	if op.OperationType() != xdr.OperationTypeInvokeHostFunction {
 		log.Ctx(ctx).Debugf("ContractDeployProcessor: skipping operation type %s (not InvokeHostFunction)", op.OperationType().String())
-		return nil, ErrInvalidOpType
+		return nil, processors.ErrInvalidOpType
 	}
 
 	invokeHostOp := op.Operation.Body.MustInvokeHostFunctionOp()
