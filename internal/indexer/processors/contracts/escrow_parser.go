@@ -432,6 +432,36 @@ func parseMilestone(val xdr.ScVal) (entities.Milestone, error) {
 	return milestone, nil
 }
 
+// parseGetEscrowByContractIDArgs parses the arguments from get_escrow_by_contract_id.
+// Args structure: [0] contract_id (Address)
+func parseGetEscrowByContractIDArgs(args []xdr.ScVal) (string, error) {
+	if len(args) < 1 {
+		return "", fmt.Errorf("insufficient arguments: expected 1 (contract_id), got %d", len(args))
+	}
+	return extractAddressFromScVal(args[0])
+}
+
+// parseGetMultipleEscrowBalancesArgs parses the arguments from get_multiple_escrow_balances.
+// Args structure: [0] addresses (Vec<Address>)
+func parseGetMultipleEscrowBalancesArgs(args []xdr.ScVal) ([]string, error) {
+	if len(args) < 1 {
+		return nil, fmt.Errorf("insufficient arguments: expected 1 (addresses), got %d", len(args))
+	}
+	vec, err := extractVecFromScVal(args[0])
+	if err != nil {
+		return nil, fmt.Errorf("parsing addresses vec: %w", err)
+	}
+	addresses := make([]string, 0, len(vec))
+	for i, val := range vec {
+		addr, err := extractAddressFromScVal(val)
+		if err != nil {
+			return nil, fmt.Errorf("parsing address at index %d: %w", i, err)
+		}
+		addresses = append(addresses, addr)
+	}
+	return addresses, nil
+}
+
 // parseTrustlineAddress parses the trustline field which can come in different formats:
 // 1. Vec of maps: [{address: Address}]
 // 2. Map directly: {address: Address}

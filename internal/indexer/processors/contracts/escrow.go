@@ -178,6 +178,32 @@ func (p *EscrowProcessor) ProcessTransaction(ctx context.Context, op *processors
 		log.Ctx(ctx).Infof("Dispute Escrow detected!")
 		log.Ctx(ctx).Infof("Escrow Contract: %s", action.ContractID)
 		log.Ctx(ctx).Infof("Signer: %s", action.Signer)
+	case "get_escrow":
+		log.Ctx(ctx).Infof("Escrow query parsed successfully!")
+		log.Ctx(ctx).Infof("Function: get_escrow")
+		log.Ctx(ctx).Infof("Contract invoked: %s", factoryContractID)
+		return nil, nil
+
+	case "get_escrow_by_contract_id":
+		contractID, err := parseGetEscrowByContractIDArgs(invokeArgs.Args)
+		if err != nil {
+			return nil, fmt.Errorf("parsing get_escrow_by_contract_id args: %w", err)
+		}
+		log.Ctx(ctx).Infof("Escrow query parsed successfully!")
+		log.Ctx(ctx).Infof("Function: get_escrow_by_contract_id")
+		log.Ctx(ctx).Infof("Contract invoked: %s", factoryContractID)
+		log.Ctx(ctx).Infof("Contract ID: %s", contractID)
+		return nil, nil
+
+	case "get_multiple_escrow_balances":
+		addresses, err := parseGetMultipleEscrowBalancesArgs(invokeArgs.Args)
+		if err != nil {
+			return nil, fmt.Errorf("parsing get_multiple_escrow_balances args: %w", err)
+		}
+		log.Ctx(ctx).Infof("Escrow query parsed successfully!")
+		log.Ctx(ctx).Infof("Function: get_multiple_escrow_balances")
+		log.Ctx(ctx).Infof("Contract invoked: %s", factoryContractID)
+		log.Ctx(ctx).Infof("Addresses: %v", addresses)
 		return nil, nil
 
 	default:
