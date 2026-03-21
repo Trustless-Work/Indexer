@@ -1,0 +1,34 @@
+                    GNU AFFERO GENERAL PUBLIC LICENSE
+                       Version 3, 19 November 2007
+
+Copyright (C) 2024 Caleb Vinicio Loria Gomez - TrustlessWork
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+                    ADDITIONAL TERMS UNDER SECTION 7
+
+As permitted under Section 7 of the GNU Affero General Public License,
+the following additional terms apply to this software:
+
+1. Attribution Requirement: Any use of this software, modified or unmodified,
+   must retain this copyright notice and provide clear attribution to
+   Caleb Vinicio Loria Gomez and TrustlessWork in any documentation,
+   user interface, or public-facing materials associated with the software.
+
+2. Network Use: If you run a modified version of this software as a service
+   accessible over a network, you must make the complete corresponding
+   source code of your modified version available to all users of that service.
+
+For the full text of the GNU Affero General Public License v3.0, see:
+https://www.gnu.org/licenses/agpl-3.0.txt
