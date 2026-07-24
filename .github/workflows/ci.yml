@@ -1,0 +1,45 @@
+# CI for the Indexer — every push to main auto-deploys to Railway, so
+# this gate is the only thing standing between a bad merge and a bad
+# deploy of a service the platform depends on.
+#
+# The checks mirror the local pre-push ritual exactly (gofmt, vet,
+# build, test) and the build matches the Dockerfile's CGO_ENABLED=0 so
+# "compiles in CI" means "compiles in the image".
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: gofmt (no diffs allowed)
+        run: |
+          UNFORMATTED=$(gofmt -l .)
+          if [ -n "$UNFORMATTED" ]; then
+            echo "These files need gofmt:"
+            echo "$UNFORMATTED"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: build (CGO_ENABLED=0, same as the Dockerfile)
+        run: CGO_ENABLED=0 go build ./...
+
+      - name: tests
+        run: go test ./...

@@ -1,0 +1,18 @@
+# Dependency watch — the reason this exists is Stellar protocol
+# upgrades: a new protocol ships as a go-stellar-sdk release ~1 month
+# before the mainnet vote, and missing that window means a
+# deterministic XDR crash-loop while the RPC retention clock runs
+# (see docs/protocol-upgrade context in the IndexerAudit). Each SDK
+# release becomes a PR that CI compiles and tests automatically.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    labels: [dependencies]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
