@@ -1,7 +1,6 @@
 package ingest
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 
@@ -22,27 +21,28 @@ const (
 	LedgerBackendTypeDatastore LedgerBackendType = "datastore"
 )
 
-// NewLedgerBackend constructs a LedgerBackend matching cfg.Indexer.
+// NewLedgerBackend constructs a LedgerBackend for the given RPC URL,
+// matching cfg.Indexer. The URL is a parameter rather than read from cfg
+// because the failover pool builds one backend per endpoint it adopts.
 // The choice is driven by INDEXER_LEDGER_BACKEND_TYPE; "rpc" is the
 // only supported value today. "datastore" is reserved for a future
 // S3/GCS-backed implementation.
-func NewLedgerBackend(ctx context.Context, cfg *config.Config) (ledgerbackend.LedgerBackend, error) {
+func NewLedgerBackend(cfg *config.Config, rpcURL string) (ledgerbackend.LedgerBackend, error) {
 	switch LedgerBackendType(cfg.Indexer.LedgerBackendType) {
 	case LedgerBackendTypeDatastore:
 		return nil, fmt.Errorf("datastore backend not implemented yet")
 	case LedgerBackendTypeRPC:
-		return newRPCLedgerBackend(cfg), nil
+		return newRPCLedgerBackend(cfg, rpcURL), nil
 	default:
 		return nil, fmt.Errorf("unsupported ledger backend type %q", cfg.Indexer.LedgerBackendType)
 	}
 }
 
-// newRPCLedgerBackend builds an RPC-backed LedgerBackend using
-// cfg.RPC.URL and cfg.Indexer.GetLedgersLimit as the internal buffer
-// hint.
-func newRPCLedgerBackend(cfg *config.Config) ledgerbackend.LedgerBackend {
+// newRPCLedgerBackend builds an RPC-backed LedgerBackend against rpcURL
+// using cfg.Indexer.GetLedgersLimit as the internal buffer hint.
+func newRPCLedgerBackend(cfg *config.Config, rpcURL string) ledgerbackend.LedgerBackend {
 	backend := ledgerbackend.NewRPCLedgerBackend(ledgerbackend.RPCLedgerBackendOptions{
-		RPCServerURL: cfg.RPC.URL,
+		RPCServerURL: rpcURL,
 		BufferSize:   uint32(cfg.Indexer.GetLedgersLimit),
 		// Without an explicit client the SDK dials with no timeout and a
 		// hung getLedgers/getHealth blocks GetLedger forever — the process
@@ -50,6 +50,6 @@ func newRPCLedgerBackend(cfg *config.Config) ledgerbackend.LedgerBackend {
 		HttpClient: &http.Client{Timeout: cfg.RPC.LedgerFetchTimeout},
 	})
 	log.Infof("Using RPCLedgerBackend (buffer=%d, fetch_timeout=%s) against %s",
-		cfg.Indexer.GetLedgersLimit, cfg.RPC.LedgerFetchTimeout, cfg.RPC.URL)
+		cfg.Indexer.GetLedgersLimit, cfg.RPC.LedgerFetchTimeout, endpointHost(rpcURL))
 	return backend
 }

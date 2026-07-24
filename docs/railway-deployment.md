@@ -201,6 +201,12 @@ Notas:
 ```bash
 # --- RPC / Network (MAINNET) ---
 RPC_URL=https://mainnet.sorobanrpc.com         # o tu RPC de mainnet preferido
+# Failover ordenado: si el endpoint activo falla o su tip se congela, el
+# indexer rota al siguiente (y da la vuelta). Poné acá providers con
+# retención profunda (archive): si el cursor cae fuera de la retención
+# del endpoint que falló, un archive sirve los ledgers de verdad en vez
+# de registrar un gap. Endpoints verificados en vivo 2026-07-23:
+RPC_FALLBACK_URLS=https://soroban-rpc.mainnet.stellar.gateway.fm,https://soroban.api.onfinality.io/public
 NETWORK_NAME=mainnet
 NETWORK_PASSPHRASE=Public Global Stellar Network ; September 2015
 

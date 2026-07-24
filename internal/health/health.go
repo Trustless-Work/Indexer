@@ -46,6 +46,10 @@ type Progress struct {
 // doing clock math.
 type Status struct {
 	Network string `json:"network"`
+	// RPCEndpoint is the HOST of the RPC endpoint currently feeding the
+	// loop — the first question in an incident once failover exists.
+	// Host only: full provider URLs can carry credentials.
+	RPCEndpoint string `json:"rpc_endpoint,omitempty"`
 	// Ready mirrors /readyz so one /status call tells the whole story.
 	Ready       bool   `json:"ready"`
 	ReadyReason string `json:"ready_reason,omitempty"`
@@ -74,6 +78,7 @@ type Tracker struct {
 
 	mu              sync.Mutex
 	network         string
+	rpcEndpoint     string
 	startedAt       time.Time
 	currentLedger   uint32
 	ledgerClosedAt  time.Time
@@ -93,6 +98,14 @@ func NewTracker(network string) *Tracker {
 // newTrackerAt is the test seam: it lets tests drive the clock.
 func newTrackerAt(network string, now func() time.Time) *Tracker {
 	return &Tracker{now: now, network: network, startedAt: now()}
+}
+
+// SetRPCEndpoint reports which RPC endpoint (host) currently feeds the
+// loop. Called at boot and after every failover rotation.
+func (t *Tracker) SetRPCEndpoint(host string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.rpcEndpoint = host
 }
 
 // RecordLedger reports one processed ledger. Called by the ingest loop
@@ -120,6 +133,7 @@ func (t *Tracker) Snapshot() Status {
 
 	s := Status{
 		Network:               t.network,
+		RPCEndpoint:           t.rpcEndpoint,
 		Ready:                 ready,
 		ReadyReason:           reason,
 		CurrentLedger:         t.currentLedger,

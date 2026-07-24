@@ -11,6 +11,21 @@ see `docs/event-schema.md`.
 ## [Unreleased]
 
 ### Added
+- Multi-RPC failover (`RPC_FALLBACK_URLS`): the RPC connection is now an
+  ordered endpoint pool feeding both the ledger backend and the
+  getLedgerEntries state fetches. When the active endpoint exhausts its
+  bounded retries — or its tip stalls (a context-deadline watchdog, since
+  the SDK's `GetLedger` blocks internally at a frozen tip) — the loop
+  rotates to the next endpoint: it re-verifies the network passphrase,
+  clamps the cursor against the new endpoint's retention window
+  (recording a gap only if no endpoint serves the range), re-prepares
+  the range, and re-arms the chain-continuity hash check so a fallback
+  serving a different chain cannot poison the read-model. Retries are
+  bounded per endpoint, infinite across the pool; the process dies only
+  when every endpoint failed. Boot connects through the same pool, so a
+  restart during a primary outage comes up on a fallback. `/status` now
+  reports the active endpoint host as `rpc_endpoint`, and
+  `config.String()` redacts credentials in URL lists.
 - Centralized configuration in `internal/config/` loaded via
   `github.com/caarlos0/env/v11`. `Load()` validates cross-field rules
   (e.g. `SINK_TYPE=rabbitmq` requires `RABBITMQ_URL`) and `String()`

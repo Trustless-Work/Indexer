@@ -20,7 +20,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"regexp"
 	"strconv"
 	"time"
@@ -31,10 +30,10 @@ import (
 	"github.com/Trustless-Work/Indexer/internal/indexer"
 	"github.com/Trustless-Work/Indexer/internal/indexer/processors"
 	"github.com/Trustless-Work/Indexer/internal/indexer/registry"
+	"github.com/Trustless-Work/Indexer/internal/sink"
 	sinkfactory "github.com/Trustless-Work/Indexer/internal/sink/factory"
 	"github.com/Trustless-Work/Indexer/internal/state"
 	"github.com/Trustless-Work/Indexer/internal/utils"
-	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	sdkingest "github.com/stellar/go-stellar-sdk/ingest"
 	"github.com/stellar/go-stellar-sdk/ingest/ledgerbackend"
 	"github.com/stellar/go-stellar-sdk/support/log"
@@ -63,7 +62,26 @@ const (
 	// between warnings. At 1s per wait, 30 waits ≈ 30s of a stalled tip —
 	// worth surfacing, since downstream freshness depends on it.
 	tipWaitWarnEvery = 30
+	// tipStallAfter is the floor of the stall budget: how long a fetch may
+	// go without producing a ledger before the endpoint is declared
+	// stalled and rotated away from. The chain closes a ledger every
+	// ~5-6s, so 60s of no progress is a frozen endpoint beyond doubt.
+	// The watchdog needs this deadline because the SDK's GetLedger BLOCKS
+	// internally at the tip (polling getHealth every 2s, forever): a
+	// frozen endpoint keeps answering getHealth with the same stale tip
+	// and no error ever reaches the loop.
+	tipStallAfter = 60 * time.Second
+	// tipStallSlack pads the ledger-fetch HTTP timeout when it exceeds
+	// tipStallAfter, so a catch-up batch that legitimately uses its full
+	// HTTP budget errors out as itself instead of as a fake stall.
+	tipStallSlack = 10 * time.Second
 )
+
+// errTipStalled reports that an endpoint spent the whole stall budget
+// without producing the requested ledger while claiming to be healthy.
+// The loop rotates to the next endpoint; with the whole pool stalled the
+// rotation cycles harmlessly until the chain (or a provider) moves again.
+var errTipStalled = errors.New("RPC tip stalled")
 
 // Ingest is the entry point of the Indexer pipeline. It blocks until ctx
 // cancellation or a terminal error.
@@ -85,16 +103,6 @@ func Ingest(ctx context.Context, cfg *config.Config) error {
 	defer func() {
 		if cerr := store.Close(); cerr != nil {
 			log.Ctx(ctx).Warnf("closing state store: %v", cerr)
-		}
-	}()
-
-	backend, err := NewLedgerBackend(ctx, cfg)
-	if err != nil {
-		return fmt.Errorf("creating ledger backend: %w", err)
-	}
-	defer func() {
-		if cerr := backend.Close(); cerr != nil {
-			log.Ctx(ctx).Warnf("closing ledger backend: %v", cerr)
 		}
 	}()
 
@@ -128,38 +136,6 @@ func Ingest(ctx context.Context, cfg *config.Config) error {
 		log.Ctx(ctx).Infof("Resuming from persisted cursor: next ledger %d", startLedger)
 	}
 
-	// Long-lived Soroban RPC client: used for tip resolution at boot and
-	// for state fetches in the loop (the canonical way to read contract
-	// state in Soroban).
-	rpc := rpcclient.NewClient(cfg.RPC.URL, &http.Client{Timeout: cfg.RPC.RequestTimeout})
-	defer func() { _ = rpc.Close() }()
-
-	// Fail fast if the RPC serves a different network than configured.
-	// The passphrase feeds transaction hashing in the ledger reader, so a
-	// mismatch would produce silently wrong tx hashes on every ledger —
-	// the worst kind of "works but lies" failure when switching networks.
-	netInfo, err := rpc.GetNetwork(ctx)
-	if err != nil {
-		return fmt.Errorf("verifying RPC network: %w", err)
-	}
-	if netInfo.Passphrase != cfg.Network.Passphrase {
-		return fmt.Errorf("RPC network mismatch: %s serves %q but NETWORK_PASSPHRASE is %q — fix RPC_URL or NETWORK_PASSPHRASE",
-			cfg.RPC.URL, netInfo.Passphrase, cfg.Network.Passphrase)
-	}
-
-	// START_LEDGER unset (0) means "start from the network tip". Resolve it
-	// via a direct RPC call: the RPC rejects a PrepareRange starting at 0,
-	// and the backend's own GetLatestLedgerSequence requires PrepareRange
-	// first (chicken-and-egg), so we ask the RPC straight up.
-	if startLedger == 0 {
-		latest, err := rpc.GetLatestLedger(ctx)
-		if err != nil {
-			return fmt.Errorf("resolving latest ledger from RPC: %w", err)
-		}
-		log.Ctx(ctx).Infof("START_LEDGER unset; starting from network tip %d", latest.Sequence)
-		startLedger = latest.Sequence
-	}
-
 	// Escrow registry: identifies "our" contracts by approved WASM hash.
 	// Populated by the discovery pass (and, later, an API seed). Built
 	// before the start-ledger clamp so a clamp can persist the full
@@ -187,8 +163,8 @@ func Ingest(ctx context.Context, cfg *config.Config) error {
 	}
 
 	// Sink: where detected facts are delivered (noop or rabbitmq). Built
-	// before the start-ledger clamp because a clamp publishes its gap
-	// evidence through it.
+	// before the RPC pool connects because gap evidence recorded by a
+	// connect-time clamp is published right after connecting.
 	outSink, err := sinkfactory.New(cfg)
 	if err != nil {
 		return fmt.Errorf("building sink: %w", err)
@@ -199,60 +175,53 @@ func Ingest(ctx context.Context, cfg *config.Config) error {
 		}
 	}()
 
-	// Clamp the start ledger against the window this RPC actually serves.
-	// Without this, a cursor that fell out of retention makes PrepareRange
-	// fail deterministically and the process crash-loops until a human
-	// intervenes (the 2026-07-22 incident). Skipping forward loses data,
-	// so the skipped range is recorded as a Gap and persisted BEFORE any
-	// ledger is processed — evidence for a later backfill.
-	rpcWindow, err := rpc.GetHealth(ctx)
-	if err != nil {
-		return fmt.Errorf("fetching RPC health for start-ledger clamp: %w", err)
-	}
-	log.Ctx(ctx).Infof("RPC window: oldest=%d latest=%d retention=%d ledgers",
-		rpcWindow.OldestLedger, rpcWindow.LatestLedger, rpcWindow.LedgerRetentionWindow)
-	if clamped, gap, cerr := clampStartLedger(startLedger, rpcWindow.OldestLedger, rpcWindow.LatestLedger, time.Now()); cerr != nil {
-		return cerr
-	} else if gap != nil {
-		log.Ctx(ctx).Warnf("Start ledger %d is below RPC retention (oldest %d): clamping forward — ledgers [%d, %d] are SKIPPED and recorded as a gap for later backfill",
-			startLedger, rpcWindow.OldestLedger, gap.FromLedger, gap.ToLedger)
-		gaps = append(gaps, *gap)
-		startLedger = clamped
-		if err := store.Save(ctx, state.State{
+	// RPC endpoint pool: RPC_URL plus RPC_FALLBACK_URLS, one endpoint
+	// active at a time, feeding both the ledger backend and the state
+	// fetches. Connecting to an endpoint verifies its network passphrase
+	// and clamps the start ledger against the window that endpoint
+	// actually serves — without the clamp, a cursor that fell out of
+	// retention makes PrepareRange fail deterministically and the process
+	// crash-loops until a human intervenes (the 2026-07-22 incident).
+	// Skipping forward loses data, so the skipped range is recorded as a
+	// Gap and persisted BEFORE any ledger is processed — evidence for a
+	// later backfill. onGap is that persistence hook, shared by boot and
+	// every later rotation.
+	pool := newRPCPool(cfg)
+	defer func() {
+		if cerr := pool.Close(); cerr != nil {
+			log.Ctx(ctx).Warnf("closing RPC pool: %v", cerr)
+		}
+	}()
+	onGap := func(gap state.Gap, clampedStart uint32) error {
+		gaps = append(gaps, gap)
+		return store.Save(ctx, state.State{
 			Network:         cfg.Network.Passphrase,
-			LastLedgerSeq:   startLedger - 1,
+			LastLedgerSeq:   clampedStart - 1,
 			EscrowContracts: reg.Snapshot(),
 			Gaps:            gaps,
-		}); err != nil {
-			return fmt.Errorf("persisting clamp gap: %w", err)
-		}
+		})
 	}
 
-	// A bounded backfill whose entire range fell out of retention cannot
-	// run at all — say so instead of letting PrepareRange fail cryptically.
-	if endLedger != 0 && startLedger > endLedger {
-		return fmt.Errorf("backfill range is unservable: clamped start %d exceeds INDEXER_END_LEDGER %d (range fell out of RPC retention) — use an archive RPC for this range", startLedger, endLedger)
+	startLedger, err = pool.Connect(ctx, startLedger, endLedger, onGap)
+	if err != nil {
+		return fmt.Errorf("connecting to an RPC endpoint: %w", err)
 	}
 
-	// Republish every recorded gap on every boot (at-least-once): a crash
-	// between recording a gap and publishing it must not lose the signal.
-	// The message id is deterministic ("gap:{net}:{from}:{to}"), so the
-	// consumer treats repeats as no-ops; the list shrinks only when an
-	// operator deletes a replayed gap from the state file.
-	for _, g := range gaps {
-		if err := outSink.Publish(ctx, events.FromGap(cfg.Network.Name, g.FromLedger, g.ToLedger, g.Reason, g.DetectedAt)); err != nil {
-			return fmt.Errorf("publishing gap evidence [%d, %d]: %w", g.FromLedger, g.ToLedger, err)
-		}
-	}
-
-	if err := prepareBackendRange(ctx, backend, startLedger, endLedger); err != nil {
-		return fmt.Errorf("preparing backend range: %w", err)
+	// Republish every recorded gap after every successful connect
+	// (at-least-once): a crash between recording a gap and publishing it
+	// must not lose the signal. The message id is deterministic
+	// ("gap:{net}:{from}:{to}"), so the consumer treats repeats as
+	// no-ops; the list shrinks only when an operator deletes a replayed
+	// gap from the state file.
+	if err := publishGaps(ctx, outSink, cfg.Network.Name, gaps); err != nil {
+		return err
 	}
 
 	// State detector: fetches the current DataKey::Escrow entry of each
 	// escrow that had activity in a ledger via getLedgerEntries — the
-	// canonical Soroban way to read contract state.
-	stateDetector := processors.NewEscrowStateDetector(rpc, reg)
+	// canonical Soroban way to read contract state. It reads through the
+	// pool, so state fetches follow every endpoint rotation.
+	stateDetector := processors.NewEscrowStateDetector(pool, reg)
 
 	// Reconciliation sweep: rotates over the whole watchlist so removals
 	// and post-gap drift are noticed without waiting for activity.
@@ -265,6 +234,7 @@ func Ingest(ctx context.Context, cfg *config.Config) error {
 	// path); the HTTP server only binds when enabled. Its lifetime is
 	// tied to ctx, same as the loop it observes.
 	tracker := health.NewTracker(cfg.Network.Name)
+	tracker.SetRPCEndpoint(pool.CurrentHost())
 	if cfg.Health.Enabled {
 		go health.Serve(ctx, fmt.Sprintf(":%d", cfg.Health.Port), tracker)
 	}
@@ -279,10 +249,23 @@ func Ingest(ctx context.Context, cfg *config.Config) error {
 	// fetched ledger must link back (by parent hash) to the ledger this
 	// state file last processed. A clamped or manually moved cursor
 	// legitimately breaks the hash chain, so the check only arms when the
-	// resume is contiguous and the state carries a hash.
+	// resume is contiguous and the state carries a hash. lastLedgerHash
+	// tracks the same anchor in memory so an endpoint rotation can re-arm
+	// it: the first ledger served by a NEW provider must descend from the
+	// last one processed, or the fallback is serving a different chain.
 	expectedPrevHash := ""
 	if resumed && persistedHash != "" && startLedger == persistedLastSeq+1 {
 		expectedPrevHash = persistedHash
+	}
+	lastLedgerHash := expectedPrevHash
+
+	// Stall budget for a single ledger fetch: how long GetLedger may sit
+	// without producing a ledger before the endpoint is declared stalled
+	// and rotated away from. Must exceed the ledger-fetch HTTP timeout,
+	// or a slow-but-legal catch-up batch would be misread as a stall.
+	stallBudget := tipStallAfter
+	if b := cfg.RPC.LedgerFetchTimeout + tipStallSlack; b > stallBudget {
+		stallBudget = b
 	}
 
 	// pendingStates defers state fetches while catching up: fetching would
@@ -301,9 +284,40 @@ func Ingest(ctx context.Context, cfg *config.Config) error {
 			return nil
 		}
 
-		meta, err := fetchLedgerWithRetry(ctx, backend, currentLedger)
+		meta, err := fetchLedgerWithRetry(ctx, pool.Backend(), currentLedger, stallBudget)
 		if err != nil {
-			return fmt.Errorf("fetching ledger %d: %w", currentLedger, err)
+			if ctx.Err() != nil {
+				log.Ctx(ctx).Infof("Ingestion loop stopped at ledger %d: %v", currentLedger, ctx.Err())
+				return nil
+			}
+			// The endpoint exhausted its bounded retries (or stalled at
+			// the tip): rotate through the pool. Retries are bounded PER
+			// endpoint; the process dies only when every endpoint in the
+			// pool failed, and the supervisor's restart retries the pool
+			// from the top.
+			log.Ctx(ctx).Warnf("RPC endpoint %s gave up on ledger %d: %v — rotating to the next endpoint", pool.CurrentHost(), currentLedger, err)
+			resumeFrom, rerr := pool.Rotate(ctx, currentLedger, endLedger, onGap)
+			if rerr != nil {
+				return fmt.Errorf("fetching ledger %d: %v; RPC failover exhausted: %w", currentLedger, err, rerr)
+			}
+			tracker.SetRPCEndpoint(pool.CurrentHost())
+			if resumeFrom == currentLedger {
+				// Contiguous hand-off: verify the new provider's first
+				// ledger descends from the last one processed, so a
+				// fallback serving a different chain cannot poison the
+				// read-model (same rule as a contiguous resume).
+				expectedPrevHash = lastLedgerHash
+			} else {
+				// The new endpoint's retention forced a clamp: the hash
+				// chain is legitimately broken and the skipped range is
+				// already recorded as a gap by onGap.
+				currentLedger = resumeFrom
+				expectedPrevHash = ""
+			}
+			if err := publishGaps(ctx, outSink, cfg.Network.Name, gaps); err != nil {
+				return err
+			}
+			continue
 		}
 
 		// One-shot divergence check on the first ledger of a contiguous
@@ -423,6 +437,7 @@ func Ingest(ctx context.Context, cfg *config.Config) error {
 		})
 		heartbeat.Beat(ctx)
 
+		lastLedgerHash = meta.LedgerHash().HexString()
 		currentLedger++
 	}
 
@@ -509,31 +524,62 @@ func prepareBackendRange(ctx context.Context, backend ledgerbackend.LedgerBacken
 	return nil
 }
 
+// publishGaps republishes every recorded gap through the sink. Message
+// ids are deterministic ("gap:{net}:{from}:{to}"), so the consumer
+// treats repeats as no-ops — the call is safe after every (re)connect.
+func publishGaps(ctx context.Context, outSink sink.Sink, network string, gaps []state.Gap) error {
+	for _, g := range gaps {
+		if err := outSink.Publish(ctx, events.FromGap(network, g.FromLedger, g.ToLedger, g.Reason, g.DetectedAt)); err != nil {
+			return fmt.Errorf("publishing gap evidence [%d, %d]: %w", g.FromLedger, g.ToLedger, err)
+		}
+	}
+	return nil
+}
+
 // fetchLedgerWithRetry wraps GetLedger with bounded exponential backoff.
 // It honours ctx cancellation between attempts and gives up after
-// maxLedgerFetchRetries failures.
+// maxLedgerFetchRetries failures; the caller (the failover loop) treats
+// any error as "this endpoint is done" and rotates the pool.
 //
 // Window errors get special handling because some RPC providers reject a
 // request for the next ledger with a "must be between oldest and latest"
 // error instead of blocking until it closes (observed live on mainnet
 // providers). Beyond-tip is normal tip-following — wait briefly without
 // consuming an attempt. Below-retention is deterministic — no number of
-// retries can fix it, so fail immediately with an actionable message
-// instead of burning ~4 minutes and a Railway restart cycle.
-func fetchLedgerWithRetry(ctx context.Context, backend ledgerbackend.LedgerBackend, ledgerSeq uint32) (xdr.LedgerCloseMeta, error) {
+// retries can fix it, so fail immediately with an actionable message; a
+// deeper-retention endpoint in the pool may still serve the ledger.
+//
+// stallBudget is the tip watchdog. It bounds the two ways a stalled
+// endpoint can hold the loop without ever failing: the SDK's GetLedger
+// blocking internally at a frozen tip (bounded per attempt via a context
+// deadline — the mechanism the SDK documents for this), and the
+// reject-style providers above accumulating beyond-tip waits. Exceeding
+// the budget returns errTipStalled so the caller rotates instead of
+// waiting on a frozen endpoint forever.
+func fetchLedgerWithRetry(ctx context.Context, backend ledgerbackend.LedgerBackend, ledgerSeq uint32, stallBudget time.Duration) (xdr.LedgerCloseMeta, error) {
 	backoff := initialRetryBackoff
 	var lastErr error
 	attempt := 1
-	tipWaits := 0
+	var tipWaited time.Duration
 
 	for attempt <= maxLedgerFetchRetries {
 		if err := ctx.Err(); err != nil {
 			return xdr.LedgerCloseMeta{}, err
 		}
 
-		meta, err := backend.GetLedger(ctx, ledgerSeq)
+		attemptCtx, cancel := context.WithTimeout(ctx, stallBudget)
+		meta, err := backend.GetLedger(attemptCtx, ledgerSeq)
+		stalled := attemptCtx.Err() != nil && ctx.Err() == nil
+		cancel()
 		if err == nil {
 			return meta, nil
+		}
+
+		// Our per-attempt deadline expired while the caller's ctx is
+		// still alive: the endpoint sat on the request for the whole
+		// stall budget without producing the ledger or an error.
+		if stalled {
+			return xdr.LedgerCloseMeta{}, fmt.Errorf("%w: no ledger %d from this endpoint within %s", errTipStalled, ledgerSeq, stallBudget)
 		}
 
 		// Context cancellation is not transient — surface immediately.
@@ -543,10 +589,13 @@ func fetchLedgerWithRetry(ctx context.Context, backend ledgerbackend.LedgerBacke
 
 		switch class, oldest, latest := classifyWindowError(err, ledgerSeq); class {
 		case windowBeyondTip:
-			tipWaits++
-			if tipWaits%tipWaitWarnEvery == 0 {
+			tipWaited += tipWaitInterval
+			if tipWaited >= stallBudget {
+				return xdr.LedgerCloseMeta{}, fmt.Errorf("%w: ledger %d still beyond this endpoint's tip (%d) after %s", errTipStalled, ledgerSeq, latest, tipWaited)
+			}
+			if int(tipWaited/tipWaitInterval)%tipWaitWarnEvery == 0 {
 				log.Ctx(ctx).Warnf("Ledger %d still beyond RPC tip (%d) after ~%s — tip may be stalled",
-					ledgerSeq, latest, time.Duration(tipWaits)*tipWaitInterval)
+					ledgerSeq, latest, tipWaited)
 			}
 			select {
 			case <-ctx.Done():
@@ -556,7 +605,7 @@ func fetchLedgerWithRetry(ctx context.Context, backend ledgerbackend.LedgerBacke
 			continue
 		case windowBelowRetention:
 			return xdr.LedgerCloseMeta{}, fmt.Errorf(
-				"ledger %d is below the RPC retention window (oldest available: %d): the cursor is out of range and retrying cannot help — reset the state file, adjust INDEXER_START_LEDGER, or backfill via an archive RPC: %w",
+				"ledger %d is below the RPC retention window (oldest available: %d): retrying against this endpoint cannot help — a deeper-retention fallback, a state-file reset, or an archive backfill can: %w",
 				ledgerSeq, oldest, err)
 		}
 

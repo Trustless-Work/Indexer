@@ -59,6 +59,19 @@ type RPCConfig struct {
 	URL            string        `env:"URL,required"`
 	RequestTimeout time.Duration `env:"REQUEST_TIMEOUT" envDefault:"30s"`
 
+	// FallbackURLs is the ordered failover list tried when the endpoint
+	// in use fails or its tip stalls: URL first, then these, wrapping
+	// around until one works (the process exits only when ALL failed).
+	// Every endpoint must serve the same network — a passphrase mismatch
+	// disqualifies the endpoint at connect time. Order matters twice:
+	// earlier entries are preferred, and when the cursor fell out of the
+	// failing endpoint's retention, a DEEPER-retention (archive) fallback
+	// turns what would be a recorded gap into actually served ledgers —
+	// so list archive-grade providers here. Comma-separated in
+	// RPC_FALLBACK_URLS; empty means no failover (single-endpoint
+	// behaviour, as before).
+	FallbackURLs []string `env:"FALLBACK_URLS" envSeparator:","`
+
 	// LedgerFetchTimeout bounds a single getLedgers/getHealth request made
 	// by the ledger backend. It is separate from RequestTimeout because a
 	// ledger batch can weigh tens of MB on mainnet (~2.65MB per ledger,

@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/Trustless-Work/Indexer/internal/indexer/registry"
-	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
@@ -52,12 +51,20 @@ type EscrowStateChange struct {
 	LastModifiedLedger uint32
 }
 
+// LedgerEntryGetter is the one slice of the Soroban RPC surface the
+// detector needs. Declared here (consumer side) so the caller can hand
+// in a plain *rpcclient.Client or the ingest failover pool — the
+// detector must not care which endpoint currently answers.
+type LedgerEntryGetter interface {
+	GetLedgerEntries(ctx context.Context, request protocol.GetLedgerEntriesRequest) (protocol.GetLedgerEntriesResponse, error)
+}
+
 // EscrowStateDetector fetches the current DataKey::Escrow entry of each
 // active escrow via the Soroban RPC (getLedgerEntries). This is the
 // canonical way to read contract state in Soroban and sidesteps the
 // fragility of parsing persistent-data writes out of transaction meta.
 type EscrowStateDetector struct {
-	rpc      *rpcclient.Client
+	rpc      LedgerEntryGetter
 	registry *registry.Registry
 	// learned remembers, per escrow, the exact LedgerKey (base64) that
 	// carried its state on the last successful fetch — so later fetches
@@ -73,7 +80,7 @@ type EscrowStateDetector struct {
 // NewEscrowStateDetector builds a state detector that queries the given
 // RPC client. The registry is used to filter response entries (defence in
 // depth) — only entries owned by known escrows are emitted.
-func NewEscrowStateDetector(rpc *rpcclient.Client, reg *registry.Registry) *EscrowStateDetector {
+func NewEscrowStateDetector(rpc LedgerEntryGetter, reg *registry.Registry) *EscrowStateDetector {
 	return &EscrowStateDetector{rpc: rpc, registry: reg, learned: make(map[string]string)}
 }
 

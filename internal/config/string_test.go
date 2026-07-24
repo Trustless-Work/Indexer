@@ -28,6 +28,28 @@ func TestString_RedactsURLPassword(t *testing.T) {
 	}
 }
 
+func TestString_RedactsFallbackURLPasswords(t *testing.T) {
+	// FallbackURLs is a []string: it must get the same per-URL userinfo
+	// redaction as scalar URL fields instead of falling through to %v.
+	withEnv(t, minimalEnv())
+	t.Setenv("RPC_FALLBACK_URLS", "https://user:fallbacksecret@rpc-a.example.org,https://rpc-b.example.org")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	out := cfg.String()
+	if strings.Contains(out, "fallbacksecret") {
+		t.Errorf("String must redact fallback URL passwords; got:\n%s", out)
+	}
+	if !strings.Contains(out, "user:***@rpc-a.example.org") {
+		t.Errorf("String must keep the redacted fallback readable; got:\n%s", out)
+	}
+	if !strings.Contains(out, "https://rpc-b.example.org") {
+		t.Errorf("String must preserve credential-free fallbacks as-is; got:\n%s", out)
+	}
+}
+
 func TestString_PreservesURLWithoutPassword(t *testing.T) {
 	withEnv(t, map[string]string{
 		"RPC_URL": "https://soroban-testnet.stellar.org",

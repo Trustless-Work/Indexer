@@ -57,7 +57,10 @@ func dumpStruct(sb *strings.Builder, prefix string, v reflect.Value) {
 // Redaction precedence:
 //  1. Field tag `secret:"true"` wins absolutely.
 //  2. Field name containing "url" triggers URL-aware redaction; the
-//     password component of any embedded userinfo is replaced.
+//     password component of any embedded userinfo is replaced. Applies
+//     per element when the field is a []string (RPC_FALLBACK_URLS) —
+//     without this, the slice would fall through to the %v default and
+//     print embedded credentials verbatim.
 //  3. Otherwise, the value is printed with %v.
 func renderValue(field reflect.StructField, value reflect.Value) string {
 	s := fmt.Sprintf("%v", value.Interface())
@@ -69,9 +72,22 @@ func renderValue(field reflect.StructField, value reflect.Value) string {
 		return "***"
 	}
 
-	if strings.Contains(strings.ToLower(field.Name), "url") && s != "" {
-		if redacted, ok := redactURLPassword(s); ok {
-			return redacted
+	if strings.Contains(strings.ToLower(field.Name), "url") {
+		if urls, ok := value.Interface().([]string); ok {
+			redacted := make([]string, len(urls))
+			for i, u := range urls {
+				if r, ok := redactURLPassword(u); ok {
+					redacted[i] = r
+				} else {
+					redacted[i] = u
+				}
+			}
+			return fmt.Sprintf("%v", redacted)
+		}
+		if s != "" {
+			if redacted, ok := redactURLPassword(s); ok {
+				return redacted
+			}
 		}
 	}
 

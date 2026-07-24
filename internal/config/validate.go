@@ -51,13 +51,29 @@ func (c *Config) Validate() error {
 
 	// Catch the classic mismatch where someone points a mainnet binary
 	// at a testnet RPC (or vice-versa). The URL hostname is the cheapest
-	// disambiguator we have.
+	// disambiguator we have. Fallbacks get the same check: a mismatched
+	// fallback is a landmine that only detonates during an outage, the
+	// worst possible moment to discover it.
 	rpcURLLower := strings.ToLower(c.RPC.URL)
 	if c.Network.Name == "mainnet" && strings.Contains(rpcURLLower, "testnet") {
 		errs = append(errs, fmt.Errorf("NETWORK_NAME=mainnet but RPC_URL appears to point to testnet (%q)", c.RPC.URL))
 	}
 	if c.Network.Name == "testnet" && strings.Contains(rpcURLLower, "mainnet") {
 		errs = append(errs, fmt.Errorf("NETWORK_NAME=testnet but RPC_URL appears to point to mainnet (%q)", c.RPC.URL))
+	}
+	for i, u := range c.RPC.FallbackURLs {
+		trimmed := strings.TrimSpace(u)
+		if trimmed == "" {
+			errs = append(errs, fmt.Errorf("RPC_FALLBACK_URLS entry %d is blank — remove the stray comma", i+1))
+			continue
+		}
+		lower := strings.ToLower(trimmed)
+		if c.Network.Name == "mainnet" && strings.Contains(lower, "testnet") {
+			errs = append(errs, fmt.Errorf("NETWORK_NAME=mainnet but RPC_FALLBACK_URLS entry %d appears to point to testnet (%q)", i+1, trimmed))
+		}
+		if c.Network.Name == "testnet" && strings.Contains(lower, "mainnet") {
+			errs = append(errs, fmt.Errorf("NETWORK_NAME=testnet but RPC_FALLBACK_URLS entry %d appears to point to mainnet (%q)", i+1, trimmed))
+		}
 	}
 
 	// --- RPC timeouts ---
