@@ -157,10 +157,19 @@ type WatchlistConfig struct {
 	SeedPath string `env:"SEED_PATH"`
 }
 
-// HealthConfig governs the HTTP health/metrics server.
+// HealthConfig governs the HTTP health/metrics server and the outbound
+// heartbeat.
 type HealthConfig struct {
 	Enabled bool `env:"ENABLED" envDefault:"true"`
 	Port    int  `env:"PORT" envDefault:"8080"`
+
+	// HeartbeatURL, when set, receives a throttled GET after processed
+	// ledgers (dead-man's switch: the external monitor alerts on
+	// silence). Provider-agnostic — any service that accepts a ping URL
+	// works (Better Stack, Healthchecks.io, UptimeRobot). Treat the URL
+	// as a secret: whoever holds it can silence the alarm.
+	// Env: HEALTH_HEARTBEAT_URL.
+	HeartbeatURL string `env:"HEARTBEAT_URL"`
 }
 
 // LoggingConfig governs the logger.

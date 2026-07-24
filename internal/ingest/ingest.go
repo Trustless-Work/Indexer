@@ -269,6 +269,12 @@ func Ingest(ctx context.Context, cfg *config.Config) error {
 		go health.Serve(ctx, fmt.Sprintf(":%d", cfg.Health.Port), tracker)
 	}
 
+	// Outbound dead-man's switch: a throttled ping after processed
+	// ledgers; the external monitor alerts on SILENCE, covering every
+	// way the loop can stop. Nil (no-op) when HEALTH_HEARTBEAT_URL is
+	// unset, so the call below needs no branching.
+	heartbeat := health.NewHeartbeat(cfg.Health.HeartbeatURL)
+
 	// Chain-continuity anchor: on a resume EXACTLY at cursor+1, the first
 	// fetched ledger must link back (by parent hash) to the ledger this
 	// state file last processed. A clamped or manually moved cursor
@@ -415,6 +421,7 @@ func Ingest(ctx context.Context, cfg *config.Config) error {
 			StateChanges:   len(states),
 			Gaps:           len(gaps),
 		})
+		heartbeat.Beat(ctx)
 
 		currentLedger++
 	}
