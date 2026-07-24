@@ -29,6 +29,12 @@ type State struct {
 	// LastLedgerSeq is the most recent ledger whose facts were all
 	// published successfully. Resume happens at LastLedgerSeq + 1.
 	LastLedgerSeq uint32 `json:"last_ledger_seq"`
+	// LastLedgerHash is the hex hash of that ledger. On a contiguous
+	// resume, the next ledger's PreviousLedgerHash must equal it —
+	// divergence means the RPC serves a different chain than this state
+	// was built on. Empty when unknown (pre-hash state files, or a
+	// clamped cursor that skipped ledgers).
+	LastLedgerHash string `json:"last_ledger_hash,omitempty"`
 	// EscrowContracts is the persisted escrow set (the registry snapshot).
 	// Populated and consumed once registry persistence is wired.
 	EscrowContracts []string `json:"escrow_contracts"`

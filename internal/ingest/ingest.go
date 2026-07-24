@@ -107,6 +107,8 @@ func Ingest(ctx context.Context, cfg *config.Config) error {
 	// Save below must carry them forward or the record is lost.
 	var persistedEscrows []string
 	var gaps []state.Gap
+	var persistedLastSeq uint32
+	persistedHash := ""
 	resumed := false
 	switch loaded, lerr := store.Load(ctx); {
 	case errors.Is(lerr, state.ErrStateNotFound):
@@ -120,6 +122,8 @@ func Ingest(ctx context.Context, cfg *config.Config) error {
 		startLedger = loaded.LastLedgerSeq + 1
 		persistedEscrows = loaded.EscrowContracts
 		gaps = loaded.Gaps
+		persistedLastSeq = loaded.LastLedgerSeq
+		persistedHash = loaded.LastLedgerHash
 		resumed = true
 		log.Ctx(ctx).Infof("Resuming from persisted cursor: next ledger %d", startLedger)
 	}
@@ -265,6 +269,23 @@ func Ingest(ctx context.Context, cfg *config.Config) error {
 		go health.Serve(ctx, fmt.Sprintf(":%d", cfg.Health.Port), tracker)
 	}
 
+	// Chain-continuity anchor: on a resume EXACTLY at cursor+1, the first
+	// fetched ledger must link back (by parent hash) to the ledger this
+	// state file last processed. A clamped or manually moved cursor
+	// legitimately breaks the hash chain, so the check only arms when the
+	// resume is contiguous and the state carries a hash.
+	expectedPrevHash := ""
+	if resumed && persistedHash != "" && startLedger == persistedLastSeq+1 {
+		expectedPrevHash = persistedHash
+	}
+
+	// pendingStates defers state fetches while catching up: fetching would
+	// read the TIP state but stamp it with a historic ledger (the audit's
+	// wrong-intermediate-balances defect). The set flushes in one batch on
+	// the ledger where the loop reaches the tip again.
+	pendingStates := make(map[string]struct{})
+	lastCheckpoint := startLedger - 1
+
 	currentLedger := startLedger
 	log.Ctx(ctx).Infof("Starting ingestion loop from ledger %d (end=%d)", startLedger, endLedger)
 
@@ -277,6 +298,15 @@ func Ingest(ctx context.Context, cfg *config.Config) error {
 		meta, err := fetchLedgerWithRetry(ctx, backend, currentLedger)
 		if err != nil {
 			return fmt.Errorf("fetching ledger %d: %w", currentLedger, err)
+		}
+
+		// One-shot divergence check on the first ledger of a contiguous
+		// resume (see the anchor above the loop).
+		if expectedPrevHash != "" {
+			if err := verifyChainContinuity(expectedPrevHash, meta); err != nil {
+				return err
+			}
+			expectedPrevHash = ""
 		}
 
 		started := time.Now()
@@ -293,15 +323,34 @@ func Ingest(ctx context.Context, cfg *config.Config) error {
 			}
 		}
 
-		// Fetch current state for each escrow with activity, then publish.
+		// Fetch current state for each escrow with activity, then publish —
+		// but NOT while catching up: getLedgerEntries reads the TIP state,
+		// and stamping that with the historic ledger being replayed would
+		// publish wrong intermediate balances (Sprint 5). Deferred escrows
+		// flush in one correctly-stamped batch upon reaching the tip; a
+		// bounded backfill never reaches it and suppresses them entirely
+		// (the live indexer's sweep owns reconciliation).
 		ledgerClosedAt := time.Unix(meta.LedgerCloseTime(), 0).UTC()
-		states, err := stateDetector.FetchStates(ctx, activeEscrows, currentLedger, ledgerClosedAt)
-		if err != nil {
-			return fmt.Errorf("fetching state at ledger %d: %w", currentLedger, err)
-		}
-		for _, sc := range states {
-			if err := outSink.Publish(ctx, events.FromStateChange(cfg.Network.Name, sc)); err != nil {
-				return fmt.Errorf("publishing state %s at ledger %d: %w", sc.EscrowID, currentLedger, err)
+		catchingUp := time.Since(ledgerClosedAt) > catchUpMinAge
+		var states []processors.EscrowStateChange
+		if catchingUp {
+			for _, id := range activeEscrows {
+				pendingStates[id] = struct{}{}
+			}
+		} else {
+			ids := activeEscrows
+			if len(pendingStates) > 0 {
+				ids = drainPending(pendingStates, activeEscrows)
+				log.Ctx(ctx).Infof("Caught up to the tip at ledger %d: fetching deferred state for %d escrows", currentLedger, len(ids))
+			}
+			states, err = stateDetector.FetchStates(ctx, ids, currentLedger, ledgerClosedAt)
+			if err != nil {
+				return fmt.Errorf("fetching state at ledger %d: %w", currentLedger, err)
+			}
+			for _, sc := range states {
+				if err := outSink.Publish(ctx, events.FromStateChange(cfg.Network.Name, sc)); err != nil {
+					return fmt.Errorf("publishing state %s at ledger %d: %w", sc.EscrowID, currentLedger, err)
+				}
 			}
 		}
 
@@ -332,14 +381,22 @@ func Ingest(ctx context.Context, cfg *config.Config) error {
 
 		// Persist the cursor only after every fact in this ledger was
 		// published. On a crash between publish and save we reprocess the
-		// ledger and the consumer dedupes by message_id (at-least-once).
-		if err := store.Save(ctx, state.State{
-			Network:         cfg.Network.Passphrase,
-			LastLedgerSeq:   currentLedger,
-			EscrowContracts: reg.Snapshot(),
-			Gaps:            gaps,
-		}); err != nil {
-			return fmt.Errorf("saving state at ledger %d: %w", currentLedger, err)
+		// window since the last save and the consumer dedupes by message_id
+		// (at-least-once). At the tip that window is one ledger; while
+		// catching up, saves space out to every checkpointInterval ledgers
+		// — the state file is rewritten and fsynced whole per save, and at
+		// ~80 ledgers/s per-ledger saves are pure write amplification.
+		if shouldCheckpoint(catchingUp, endLedger != 0 && currentLedger == endLedger, currentLedger, lastCheckpoint) {
+			if err := store.Save(ctx, state.State{
+				Network:         cfg.Network.Passphrase,
+				LastLedgerSeq:   currentLedger,
+				LastLedgerHash:  meta.LedgerHash().HexString(),
+				EscrowContracts: reg.Snapshot(),
+				Gaps:            gaps,
+			}); err != nil {
+				return fmt.Errorf("saving state at ledger %d: %w", currentLedger, err)
+			}
+			lastCheckpoint = currentLedger
 		}
 
 		// age is how far behind the chain this ledger's data is by the time
@@ -363,6 +420,13 @@ func Ingest(ctx context.Context, cfg *config.Config) error {
 	}
 
 	log.Ctx(ctx).Infof("Backfill complete: processed ledgers %d to %d", startLedger, endLedger)
+	if len(pendingStates) > 0 {
+		// Deliberate: a bounded backfill replays HISTORY — its job is the
+		// event/deposit trail. Emitting tip-state stamped with historic
+		// ledgers is the exact defect this run mode used to have; the live
+		// indexer's reconciliation sweep owns current state.
+		log.Ctx(ctx).Infof("Backfill suppressed state snapshots for %d escrows (historic stamping would be wrong); the live indexer's sweep reconciles them", len(pendingStates))
+	}
 	return nil
 }
 
