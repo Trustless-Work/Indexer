@@ -87,3 +87,13 @@ func (s *Sweeper) NextBatch(currentLedger uint32, keyCost func(string) int, budg
 func (s *Sweeper) ModifiedSince() uint32 {
 	return s.prevPassStart
 }
+
+// Reset restarts the rotation from the top with the changed-since filter
+// disarmed, so the next pass re-publishes the current state of EVERY
+// tracked escrow (the admin reconcile command). Budget discipline is
+// untouched — the pass still spreads over as many ledgers as it needs.
+func (s *Sweeper) Reset() {
+	s.pos = 0
+	s.passStart = 0
+	s.prevPassStart = 0
+}

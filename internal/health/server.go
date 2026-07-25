@@ -15,10 +15,16 @@ import (
 // than a couple of seconds is a hung client, not a request worth saving.
 const shutdownGrace = 2 * time.Second
 
-// Handler returns the health HTTP routes for t. Split from Serve so
-// tests can exercise the endpoints with httptest and no real listener.
-func Handler(t *Tracker) http.Handler {
+// Handler returns the health HTTP routes for t, plus admin mounted
+// under /admin/ when non-nil (the control surface carries its own
+// auth). Split from Serve so tests can exercise the endpoints with
+// httptest and no real listener.
+func Handler(t *Tracker, admin http.Handler) http.Handler {
 	mux := http.NewServeMux()
+
+	if admin != nil {
+		mux.Handle("/admin/", admin)
+	}
 
 	// Liveness: the process is up. Nothing else — a hung loop still
 	// answers 200 here, and that is by design (see package doc).
@@ -58,8 +64,8 @@ func Handler(t *Tracker) http.Handler {
 // itself. The trade-off is explicit — with the server down, external
 // monitors see the service as unreachable and alert, which is the
 // correct outcome anyway.
-func Serve(ctx context.Context, addr string, t *Tracker) {
-	srv := &http.Server{Addr: addr, Handler: Handler(t)}
+func Serve(ctx context.Context, addr string, t *Tracker, admin http.Handler) {
+	srv := &http.Server{Addr: addr, Handler: Handler(t, admin)}
 
 	go func() {
 		<-ctx.Done()
@@ -68,7 +74,11 @@ func Serve(ctx context.Context, addr string, t *Tracker) {
 		_ = srv.Shutdown(shutdownCtx)
 	}()
 
-	log.Ctx(ctx).Infof("Health server listening on %s (/healthz /readyz /status)", addr)
+	routes := "/healthz /readyz /status"
+	if admin != nil {
+		routes += " /admin/*"
+	}
+	log.Ctx(ctx).Infof("Health server listening on %s (%s)", addr, routes)
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Ctx(ctx).Errorf("Health server failed: %v — indexing continues without health endpoints", err)
 	}

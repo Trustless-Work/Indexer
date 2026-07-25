@@ -20,10 +20,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"regexp"
 	"strconv"
 	"time"
 
+	"github.com/Trustless-Work/Indexer/internal/commands"
 	"github.com/Trustless-Work/Indexer/internal/config"
 	"github.com/Trustless-Work/Indexer/internal/events"
 	"github.com/Trustless-Work/Indexer/internal/health"
@@ -114,6 +116,7 @@ func Ingest(ctx context.Context, cfg *config.Config) error {
 	// Gaps ride along unchanged: they are append-only evidence and every
 	// Save below must carry them forward or the record is lost.
 	var persistedEscrows []string
+	var persistedRemoved []string
 	var gaps []state.Gap
 	var persistedLastSeq uint32
 	persistedHash := ""
@@ -129,6 +132,7 @@ func Ingest(ctx context.Context, cfg *config.Config) error {
 		}
 		startLedger = loaded.LastLedgerSeq + 1
 		persistedEscrows = loaded.EscrowContracts
+		persistedRemoved = loaded.RemovedEscrows
 		gaps = loaded.Gaps
 		persistedLastSeq = loaded.LastLedgerSeq
 		persistedHash = loaded.LastLedgerHash
@@ -147,10 +151,13 @@ func Ingest(ctx context.Context, cfg *config.Config) error {
 
 	// Repopulate the registry: from persisted state on resume, otherwise
 	// from the optional seed file (escrows created before the indexed
-	// range). Discovery keeps adding new escrows from here on.
+	// range). Discovery keeps adding new escrows from here on. Tombstones
+	// restore FIRST so a stale entry in the persisted escrow list cannot
+	// outlive its own removal.
 	if resumed {
+		reg.SeedRemoved(persistedRemoved)
 		reg.Seed(persistedEscrows)
-		log.Ctx(ctx).Infof("Restored %d escrows from state", reg.Size())
+		log.Ctx(ctx).Infof("Restored %d escrows from state (%d tombstoned)", reg.Size(), len(persistedRemoved))
 	} else {
 		seedIDs, serr := state.LoadSeed(cfg.Escrow.SeedPath)
 		if serr != nil {
@@ -198,12 +205,8 @@ func Ingest(ctx context.Context, cfg *config.Config) error {
 	}()
 	onGap := func(gap state.Gap, clampedStart uint32) error {
 		gaps = append(gaps, gap)
-		return store.Save(ctx, state.State{
-			Network:         cfg.Network.Passphrase,
-			LastLedgerSeq:   clampedStart - 1,
-			EscrowContracts: reg.Snapshot(),
-			Gaps:            gaps,
-		})
+		// No LastLedgerHash on purpose: a clamp breaks the hash chain.
+		return store.Save(ctx, snapshotState(cfg, reg, clampedStart-1, "", gaps))
 	}
 
 	startLedger, err = pool.Connect(ctx, startLedger, endLedger, onGap)
@@ -239,8 +242,34 @@ func Ingest(ctx context.Context, cfg *config.Config) error {
 	// tied to ctx, same as the loop it observes.
 	tracker := health.NewTracker(cfg.Network.Name)
 	tracker.SetRPCEndpoint(pool.CurrentHost())
+
+	// Command plane: AMQP consumer and admin HTTP handlers VALIDATE and
+	// ENQUEUE only; the loop drains this channel between ledgers and
+	// executes, staying the single writer of registry and state.
+	cmdCh := make(chan commands.Command, commandQueueSize)
+	executor := &commandExecutor{
+		reg:      reg,
+		detector: stateDetector,
+		outSink:  outSink,
+		sweeper:  sweeper,
+		tracker:  tracker,
+		network:  cfg.Network.Name,
+		now:      time.Now,
+	}
+	if cfg.Sink.Type == "rabbitmq" {
+		go commands.Consume(ctx, commands.ConsumerConfig{
+			URL:      cfg.RabbitMQ.URL,
+			Exchange: cfg.RabbitMQ.CommandsExchange,
+			Network:  cfg.Network.Name,
+		}, cmdCh)
+	}
+
 	if cfg.Health.Enabled {
-		go health.Serve(ctx, fmt.Sprintf(":%d", cfg.Health.Port), tracker)
+		var admin http.Handler
+		if cfg.AdminToken != "" {
+			admin = commands.AdminHandler(cfg.AdminToken, commands.EnqueueInto(cmdCh), reg)
+		}
+		go health.Serve(ctx, fmt.Sprintf(":%d", cfg.Health.Port), tracker, admin)
 	}
 
 	// Outbound dead-man's switch: a throttled ping after processed
@@ -414,13 +443,7 @@ func Ingest(ctx context.Context, cfg *config.Config) error {
 		// — the state file is rewritten and fsynced whole per save, and at
 		// ~80 ledgers/s per-ledger saves are pure write amplification.
 		if shouldCheckpoint(catchingUp, endLedger != 0 && currentLedger == endLedger, currentLedger, lastCheckpoint) {
-			if err := store.Save(ctx, state.State{
-				Network:         cfg.Network.Passphrase,
-				LastLedgerSeq:   currentLedger,
-				LastLedgerHash:  meta.LedgerHash().HexString(),
-				EscrowContracts: reg.Snapshot(),
-				Gaps:            gaps,
-			}); err != nil {
+			if err := store.Save(ctx, snapshotState(cfg, reg, currentLedger, meta.LedgerHash().HexString(), gaps)); err != nil {
 				return fmt.Errorf("saving state at ledger %d: %w", currentLedger, err)
 			}
 			lastCheckpoint = currentLedger
@@ -445,6 +468,36 @@ func Ingest(ctx context.Context, cfg *config.Config) error {
 		heartbeat.Beat(ctx)
 
 		lastLedgerHash = meta.LedgerHash().HexString()
+
+		// Control plane: execute queued commands now that this ledger is
+		// fully published and persisted — between ledgers is the ONE spot
+		// where mutating the registry cannot race the processors. A
+		// mutation persists immediately: commands were acked at enqueue,
+		// so durability is on us.
+		saveNow := func() error {
+			return store.Save(ctx, snapshotState(cfg, reg, currentLedger, lastLedgerHash, gaps))
+		}
+		if mutated, cerr := drainCommands(ctx, cmdCh, executor, currentLedger, ledgerClosedAt); cerr != nil {
+			return fmt.Errorf("executing command at ledger %d: %w", currentLedger, cerr)
+		} else if mutated {
+			if err := saveNow(); err != nil {
+				return fmt.Errorf("persisting command result at ledger %d: %w", currentLedger, err)
+			}
+		}
+		// An operator pause holds HERE — after persist, before the next
+		// fetch — still draining commands so resume works, and loudly:
+		// readyz 503 + heartbeat silence + periodic warnings until the
+		// TTL auto-resumes.
+		if executor.paused() {
+			if err := holdWhilePaused(ctx, cmdCh, executor, currentLedger, ledgerClosedAt, saveNow); err != nil {
+				if ctx.Err() != nil {
+					log.Ctx(ctx).Infof("Ingestion loop stopped while paused at ledger %d: %v", currentLedger, ctx.Err())
+					return nil
+				}
+				return fmt.Errorf("while paused at ledger %d: %w", currentLedger, err)
+			}
+		}
+
 		currentLedger++
 	}
 
@@ -529,6 +582,20 @@ func prepareBackendRange(ctx context.Context, backend ledgerbackend.LedgerBacken
 		return fmt.Errorf("preparing range from %d: %w", startLedger, err)
 	}
 	return nil
+}
+
+// snapshotState assembles the persisted record from the live pieces —
+// the one place that knows every field a Save must carry (forgetting
+// gaps or tombstones at one call site would silently erase them).
+func snapshotState(cfg *config.Config, reg *registry.Registry, lastSeq uint32, lastHash string, gaps []state.Gap) state.State {
+	return state.State{
+		Network:         cfg.Network.Passphrase,
+		LastLedgerSeq:   lastSeq,
+		LastLedgerHash:  lastHash,
+		EscrowContracts: reg.Snapshot(),
+		RemovedEscrows:  reg.RemovedSnapshot(),
+		Gaps:            gaps,
+	}
 }
 
 // publishGaps republishes every recorded gap through the sink. Message

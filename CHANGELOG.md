@@ -11,6 +11,23 @@ see `docs/event-schema.md`.
 ## [Unreleased]
 
 ### Added
+- Command plane (`internal/commands`): the indexer can now be told
+  things at runtime instead of redeployed. Commands arrive over AMQP
+  (direct exchange `stellar.commands` → queue
+  `indexer.commands.<network>`, own connection with redial) and over an
+  authenticated admin HTTP surface on the health server (`ADMIN_TOKEN`,
+  bearer auth in constant time, disabled when unset): POST
+  `/admin/escrows`, `/admin/escrows/{id}/refresh`, DELETE
+  `/admin/escrows/{id}`, `/admin/reseed`, `/admin/pause` (TTL-capped at
+  1h, auto-resume, deliberately noisy: readyz 503 + heartbeat silence +
+  periodic warnings), `/admin/resume`, `/admin/reconcile`, GET
+  `/admin/registry`. Every entry point only validates and enqueues; the
+  ingest loop drains between ledgers and executes, staying the single
+  writer of registry and state, and each execution leaves one audit log
+  line. `track_escrow` seeds idempotently and publishes current state
+  within seconds; `reconcile` restarts the sweep with the changed-since
+  filter disarmed. Removal is a persisted TOMBSTONE: discovery and seed
+  files cannot resurrect a removed escrow — only an explicit track can.
 - Backpressure-aware publishing: a full queue now makes the indexer WAIT
   instead of die. Broker rejections that leave the channel usable (a
   nack from a reject-publish overflow policy, a confirm timeout) retry

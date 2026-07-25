@@ -54,6 +54,12 @@ type Status struct {
 	Ready       bool   `json:"ready"`
 	ReadyReason string `json:"ready_reason,omitempty"`
 
+	// Paused reports an operator pause; PausedUntil is its auto-expiry.
+	// A paused indexer is deliberately NOT ready — the alarm noise is the
+	// feature that keeps a forgotten pause from recreating an outage.
+	Paused      bool   `json:"paused,omitempty"`
+	PausedUntil string `json:"paused_until,omitempty"`
+
 	CurrentLedger uint32 `json:"current_ledger"`
 	// LedgerAgeSeconds is how far behind the chain the last processed
 	// ledger's data is — the freshness number downstream consumers care
@@ -88,6 +94,7 @@ type Tracker struct {
 	eventsTotal     int
 	statesTotal     int
 	gaps            int
+	pausedUntil     time.Time
 }
 
 // NewTracker builds a Tracker for the given network label.
@@ -106,6 +113,15 @@ func (t *Tracker) SetRPCEndpoint(host string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.rpcEndpoint = host
+}
+
+// SetPaused reports an operator pause auto-expiring at until; the zero
+// time clears it. While paused, readiness is false with an explicit
+// reason — a paused indexer must page, not idle silently.
+func (t *Tracker) SetPaused(until time.Time) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.pausedUntil = until
 }
 
 // RecordLedger reports one processed ledger. Called by the ingest loop
@@ -136,6 +152,7 @@ func (t *Tracker) Snapshot() Status {
 		RPCEndpoint:           t.rpcEndpoint,
 		Ready:                 ready,
 		ReadyReason:           reason,
+		Paused:                now.Before(t.pausedUntil),
 		CurrentLedger:         t.currentLedger,
 		LastLedgerMillis:      float64(t.lastDuration) / float64(time.Millisecond),
 		KnownEscrows:          t.knownEscrows,
@@ -143,6 +160,9 @@ func (t *Tracker) Snapshot() Status {
 		StateChangesPublished: t.statesTotal,
 		Gaps:                  t.gaps,
 		UptimeSeconds:         now.Sub(t.startedAt).Seconds(),
+	}
+	if s.Paused {
+		s.PausedUntil = t.pausedUntil.UTC().Format(time.RFC3339)
 	}
 	if !t.ledgerClosedAt.IsZero() {
 		s.LedgerAgeSeconds = now.Sub(t.ledgerClosedAt).Seconds()
@@ -163,6 +183,9 @@ func (t *Tracker) Ready() (bool, string) {
 
 // readiness holds the actual rule; callers must hold t.mu.
 func (t *Tracker) readiness(now time.Time) (bool, string) {
+	if now.Before(t.pausedUntil) {
+		return false, "paused by operator until " + t.pausedUntil.UTC().Format(time.RFC3339)
+	}
 	if t.lastProcessedAt.IsZero() {
 		return false, "no ledger processed yet"
 	}

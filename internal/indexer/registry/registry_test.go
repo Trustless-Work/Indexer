@@ -68,3 +68,60 @@ func TestSeed_bypassesHashCheck(t *testing.T) {
 		t.Fatalf("expected size 2, got %d", r.Size())
 	}
 }
+
+func TestRemove_TombstoneBlocksResurrection(t *testing.T) {
+	approved := "aa" + strings.Repeat("00", 30) + "aa"
+	r, err := New([]string{approved})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash, err := ParseHash(approved)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r.Seed([]string{"CGONE"})
+	if !r.Remove("CGONE") {
+		t.Fatal("removing a tracked escrow should report true")
+	}
+	if r.IsEscrow("CGONE") {
+		t.Fatal("removed escrow must not be tracked")
+	}
+
+	// Neither discovery nor seed may undo an explicit removal.
+	if r.Register("CGONE", hash) {
+		t.Fatal("discovery must not resurrect a tombstoned escrow")
+	}
+	r.Seed([]string{"CGONE"})
+	if r.IsEscrow("CGONE") {
+		t.Fatal("seed must not resurrect a tombstoned escrow")
+	}
+
+	// Only explicit Track outranks the tombstone.
+	if !r.Track("CGONE") {
+		t.Fatal("track should re-add the escrow")
+	}
+	if !r.IsEscrow("CGONE") || len(r.RemovedSnapshot()) != 0 {
+		t.Fatal("track must clear the tombstone")
+	}
+}
+
+func TestSeedRemoved_RestoresTombstonesAtBoot(t *testing.T) {
+	r, err := New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A stale escrow list entry must not outlive its own tombstone,
+	// regardless of restore order.
+	r.SeedRemoved([]string{"CGONE"})
+	r.Seed([]string{"CGONE", "CKEPT"})
+	if r.IsEscrow("CGONE") {
+		t.Fatal("restored tombstone must win over the escrow list")
+	}
+	if !r.IsEscrow("CKEPT") || r.Size() != 1 {
+		t.Fatalf("expected only CKEPT tracked, got size %d", r.Size())
+	}
+	if got := r.RemovedSnapshot(); len(got) != 1 || got[0] != "CGONE" {
+		t.Fatalf("RemovedSnapshot = %v, want [CGONE]", got)
+	}
+}

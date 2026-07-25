@@ -38,6 +38,12 @@ type State struct {
 	// EscrowContracts is the persisted escrow set (the registry snapshot).
 	// Populated and consumed once registry persistence is wired.
 	EscrowContracts []string `json:"escrow_contracts"`
+	// RemovedEscrows is the persisted tombstone set: contracts explicitly
+	// removed by an operator. Persisted so a restart does not resurrect
+	// them — discovery and seed files would otherwise re-add a removed
+	// escrow on the next catch-up. Additive field; older files load with
+	// an empty set.
+	RemovedEscrows []string `json:"removed_escrows,omitempty"`
 	// Gaps records every ledger range this instance knowingly skipped
 	// (e.g. the cursor fell below the RPC retention window and was
 	// clamped forward). It is the durable evidence a later backfill needs

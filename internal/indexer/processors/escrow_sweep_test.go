@@ -133,3 +133,37 @@ func TestMissingFrom(t *testing.T) {
 		t.Fatalf("missing = %v, want [CC]", missing)
 	}
 }
+
+func TestSweeper_ResetDisarmsChangedSinceAndRestartsRotation(t *testing.T) {
+	reg := seededRegistry(t, "CA", "CB", "CC")
+	s := NewSweeper(reg)
+	cost := func(string) int { return 1 }
+
+	// Complete two passes so ModifiedSince is armed and the cursor moved.
+	for range 2 {
+		for {
+			if _, done := s.NextBatch(500, cost, 2); done {
+				break
+			}
+		}
+	}
+	if s.ModifiedSince() == 0 {
+		t.Fatal("precondition: two passes should arm the changed-since anchor")
+	}
+
+	// Mid-pass reset: rotation restarts from the top with the filter off.
+	if _, done := s.NextBatch(600, cost, 2); done {
+		t.Fatal("precondition: batch of 2 over 3 escrows should not complete a pass")
+	}
+	s.Reset()
+	if s.ModifiedSince() != 0 {
+		t.Fatal("Reset must disarm the changed-since filter")
+	}
+	batch, _ := s.NextBatch(700, cost, 2)
+	if len(batch) != 2 || batch[0] != "CA" {
+		t.Fatalf("post-reset batch = %v, want rotation restarted at CA", batch)
+	}
+	if s.ModifiedSince() != 0 {
+		t.Fatal("the pass right after Reset must report every escrow (ModifiedSince 0)")
+	}
+}

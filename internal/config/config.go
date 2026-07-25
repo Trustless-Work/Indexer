@@ -40,6 +40,13 @@ type Config struct {
 	// pipeline (true) or are logged and skipped (false). Default true
 	// in production: prefer halt-and-alert over silent data loss.
 	StrictMode bool `env:"STRICT_MODE" envDefault:"true"`
+
+	// AdminToken guards the /admin/* control surface on the health
+	// server (track/remove/refresh escrows, pause/resume, reconcile).
+	// Empty (the default) disables the surface entirely. The health port
+	// must never be public — admin auth is defence in depth behind the
+	// private network, not a substitute for it.
+	AdminToken string `env:"ADMIN_TOKEN" secret:"true"`
 }
 
 // NetworkConfig identifies which Stellar network this Indexer instance
@@ -156,6 +163,11 @@ type RabbitMQConfig struct {
 	URL               string `env:"URL"`
 	Exchange          string `env:"EXCHANGE" envDefault:"stellar.events"`
 	PublisherConfirms bool   `env:"PUBLISHER_CONFIRMS" envDefault:"true"`
+
+	// CommandsExchange is the direct exchange the indexer CONSUMES
+	// control commands from (queue indexer.commands.<network>, routing
+	// key <network>). Consumption runs whenever SINK_TYPE=rabbitmq.
+	CommandsExchange string `env:"COMMANDS_EXCHANGE" envDefault:"stellar.commands"`
 }
 
 // StateConfig governs the on-disk state file (cursor + watchlist).

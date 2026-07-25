@@ -113,8 +113,16 @@ Served on `HEALTH_PORT` (default 8080) while the loop runs:
   silence, whatever the cause. Point platform healthchecks and uptime
   monitors here.
 - `GET /status` — the incident numbers: cursor, ledger age, active RPC
-  endpoint (`rpc_endpoint`), escrows tracked, publish totals, recorded
-  gaps, uptime.
+  endpoint (`rpc_endpoint`), pause state, escrows tracked, publish
+  totals, recorded gaps, uptime.
+
+When `ADMIN_TOKEN` is set, the same server also mounts the `/admin/*`
+control surface (bearer auth): track / remove / refresh escrows, bulk
+reseed, TTL-bounded pause / resume, reconcile, and `GET /admin/registry`.
+The same commands arrive over AMQP (`stellar.commands` exchange) — the
+core API uses that path to announce new escrows instead of waiting for
+on-chain discovery. Either way commands are only queued at the edge; the
+ingest loop executes them between ledgers.
 
 ## Project structure
 
