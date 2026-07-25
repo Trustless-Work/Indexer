@@ -8,7 +8,11 @@
 //   - return ErrSinkUnavailable (wrapped) when the transport is
 //     unreachable;
 //   - return ErrSinkPublishRejected (wrapped) when the broker rejects or
-//     fails to confirm a publish;
+//     fails to confirm a publish but the connection remains usable
+//     (backpressure — the one class callers may retry);
+//   - return ErrSinkUnroutable (wrapped) when the broker accepted the
+//     publish but nothing was bound to receive it (broken topology —
+//     never retryable);
 //   - return events.ErrEnvelopeInvalid (wrapped) when the envelope fails
 //     validation;
 //   - honour ctx for cancellation/timeouts.
@@ -34,9 +38,21 @@ type Sink interface {
 
 var (
 	// ErrSinkUnavailable signals the transport is unreachable (dial /
-	// channel / publish failure). Typically transient.
+	// channel / publish failure). NOT retryable in-process: an AMQP
+	// channel that failed is closed for good, so only a reconnect (today:
+	// crash-restart) can recover.
 	ErrSinkUnavailable = errors.New("sink unavailable")
 	// ErrSinkPublishRejected signals the broker explicitly rejected the
-	// publish (a nack, or a confirm timeout).
+	// publish (a nack — e.g. a full queue with a reject-publish overflow
+	// policy — or a confirm timeout). The channel stays usable, so this
+	// IS the class a caller may retry with backoff: backpressure, not
+	// breakage.
 	ErrSinkPublishRejected = errors.New("sink publish rejected")
+	// ErrSinkUnroutable signals the broker accepted the publish but no
+	// queue was bound to receive it (basic.return on a mandatory
+	// publish). Deliberately distinct from ErrSinkPublishRejected:
+	// retrying cannot fix missing topology — every retry would confirm
+	// and come back returned, a silent hot loop — so callers must treat
+	// it as fatal and alert.
+	ErrSinkUnroutable = errors.New("sink publish unroutable")
 )

@@ -163,11 +163,13 @@ func (s *Sink) Publish(ctx context.Context, env events.Envelope) error {
 		}
 		// A returned message is CONFIRMED (received but unroutable), so
 		// the ack alone is not success. Publish is serialized, so any
-		// buffered return belongs to this publish.
+		// buffered return belongs to this publish. Wrapped as
+		// ErrSinkUnroutable — NOT ErrSinkPublishRejected — because broken
+		// topology must not be retried like backpressure.
 		select {
 		case ret := <-s.returns:
 			return fmt.Errorf("%w: broker returned %s unroutable (reply %d: %s) — is the consumer's queue bound?",
-				sink.ErrSinkPublishRejected, env.MessageID, ret.ReplyCode, ret.ReplyText)
+				sink.ErrSinkUnroutable, env.MessageID, ret.ReplyCode, ret.ReplyText)
 		default:
 		}
 		return nil

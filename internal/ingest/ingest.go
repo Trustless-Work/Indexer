@@ -164,16 +164,20 @@ func Ingest(ctx context.Context, cfg *config.Config) error {
 
 	// Sink: where detected facts are delivered (noop or rabbitmq). Built
 	// before the RPC pool connects because gap evidence recorded by a
-	// connect-time clamp is published right after connecting.
-	outSink, err := sinkfactory.New(cfg)
+	// connect-time clamp is published right after connecting. The
+	// backpressure wrapper makes a full queue WAIT (retrying in place,
+	// cursor untouched) instead of killing the process; only envelope
+	// bugs, broken topology and a dead connection stay fatal.
+	rawSink, err := sinkfactory.New(cfg)
 	if err != nil {
 		return fmt.Errorf("building sink: %w", err)
 	}
 	defer func() {
-		if cerr := outSink.Close(); cerr != nil {
+		if cerr := rawSink.Close(); cerr != nil {
 			log.Ctx(ctx).Warnf("closing sink: %v", cerr)
 		}
 	}()
+	outSink := newBackpressureSink(rawSink)
 
 	// RPC endpoint pool: RPC_URL plus RPC_FALLBACK_URLS, one endpoint
 	// active at a time, feeding both the ledger backend and the state
@@ -335,8 +339,11 @@ func Ingest(ctx context.Context, cfg *config.Config) error {
 			return fmt.Errorf("processing ledger %d: %w", currentLedger, err)
 		}
 
-		// Publish each detected event/deposit. On failure we return
-		// (strict): a dropped publish would be silent data loss.
+		// Publish each detected event/deposit. Broker backpressure never
+		// surfaces here (the sink wrapper retries in place, holding the
+		// cursor); an error IS one of the fatal classes — envelope bug,
+		// unroutable topology, dead connection — and returning is right:
+		// advancing past it would be silent data loss.
 		for _, ev := range facts {
 			if err := outSink.Publish(ctx, events.FromEscrowEvent(cfg.Network.Name, ev)); err != nil {
 				return fmt.Errorf("publishing event %s:%d at ledger %d: %w", ev.TxHash, ev.EventIndex, currentLedger, err)

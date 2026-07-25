@@ -11,6 +11,17 @@ see `docs/event-schema.md`.
 ## [Unreleased]
 
 ### Added
+- Backpressure-aware publishing: a full queue now makes the indexer WAIT
+  instead of die. Broker rejections that leave the channel usable (a
+  nack from a reject-publish overflow policy, a confirm timeout) retry
+  in place with 1s→60s backoff and no attempt cap, holding the cursor —
+  idempotent message ids plus consumer dedupe make indefinite
+  republishing safe, and the heartbeat's silence alert fires while the
+  loop waits. A new `ErrSinkUnroutable` distinguishes `basic.return`
+  (broken topology — fatal, retrying would hot-loop) from queue-full
+  nacks; `ErrSinkUnavailable` stays fatal-fast because a failed AMQP
+  channel never recovers in-process — the crash-restart owns the redial
+  (in-process reconnection evaluated and declined).
 - Multi-RPC failover (`RPC_FALLBACK_URLS`): the RPC connection is now an
   ordered endpoint pool feeding both the ledger backend and the
   getLedgerEntries state fetches. When the active endpoint exhausts its
