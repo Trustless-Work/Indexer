@@ -25,16 +25,15 @@ import "time"
 // the sink package receives SinkConfig + RabbitMQConfig, not the whole
 // thing).
 type Config struct {
-	Network   NetworkConfig   `envPrefix:"NETWORK_"`
-	RPC       RPCConfig       `envPrefix:"RPC_"`
-	Indexer   IndexerConfig   `envPrefix:"INDEXER_"`
-	Escrow    EscrowConfig    `envPrefix:"ESCROW_"`
-	Sink      SinkConfig      `envPrefix:"SINK_"`
-	RabbitMQ  RabbitMQConfig  `envPrefix:"RABBITMQ_"`
-	State     StateConfig     `envPrefix:"STATE_"`
-	Watchlist WatchlistConfig `envPrefix:"WATCHLIST_"`
-	Health    HealthConfig    `envPrefix:"HEALTH_"`
-	Logging   LoggingConfig   `envPrefix:"LOG_"`
+	Network  NetworkConfig  `envPrefix:"NETWORK_"`
+	RPC      RPCConfig      `envPrefix:"RPC_"`
+	Indexer  IndexerConfig  `envPrefix:"INDEXER_"`
+	Escrow   EscrowConfig   `envPrefix:"ESCROW_"`
+	Sink     SinkConfig     `envPrefix:"SINK_"`
+	RabbitMQ RabbitMQConfig `envPrefix:"RABBITMQ_"`
+	State    StateConfig    `envPrefix:"STATE_"`
+	Health   HealthConfig   `envPrefix:"HEALTH_"`
+	Logging  LoggingConfig  `envPrefix:"LOG_"`
 
 	// StrictMode controls whether errs.IsSkippable errors halt the
 	// pipeline (true) or are logged and skipped (false). Default true
@@ -47,6 +46,14 @@ type Config struct {
 	// must never be public — admin auth is defence in depth behind the
 	// private network, not a substitute for it.
 	AdminToken string `env:"ADMIN_TOKEN" secret:"true"`
+
+	// Replay marks a one-shot `indexer replay` run (set by the CLI, not
+	// by env): bounded range, nothing persisted (the live indexer keeps
+	// its cursor and flock), watchlist read point-in-time, no command
+	// consumption (it would compete with the live consumer on the same
+	// queue), no heartbeat (a replay pinging the dead-man's switch would
+	// mask a dead live indexer).
+	Replay bool `env:"-"`
 }
 
 // NetworkConfig identifies which Stellar network this Indexer instance
@@ -115,17 +122,6 @@ type IndexerConfig struct {
 	// operational emergencies (e.g. an RPC provider rate-limiting the
 	// extra request) without needing a build.
 	SweepEnabled bool `env:"SWEEP_ENABLED" envDefault:"true"`
-
-	// Workers caps the per-ledger parallel-tx worker pool. Zero means
-	// "auto" (runtime.NumCPU * 2 at construction time). Setting an
-	// explicit value is useful for resource-constrained environments.
-	Workers int `env:"WORKERS"`
-
-	// SkipTxMeta and SkipTxEnvelope strip the corresponding XDR fields
-	// from captured transactions to save bandwidth / storage. Default
-	// false (keep everything).
-	SkipTxMeta     bool `env:"SKIP_TX_META"`
-	SkipTxEnvelope bool `env:"SKIP_TX_ENVELOPE"`
 }
 
 // EscrowConfig declares which contracts count as TW escrows. A contract
@@ -170,16 +166,10 @@ type RabbitMQConfig struct {
 	CommandsExchange string `env:"COMMANDS_EXCHANGE" envDefault:"stellar.commands"`
 }
 
-// StateConfig governs the on-disk state file (cursor + watchlist).
+// StateConfig governs the on-disk state files (cursor + watchlist; the
+// watchlist file lives next to Path with a .watchlist.json suffix).
 type StateConfig struct {
-	Path  string `env:"PATH" envDefault:"./indexer.state.json"`
-	Reset bool   `env:"RESET"`
-}
-
-// WatchlistConfig holds optional seed source for the escrow watchlist
-// at first boot.
-type WatchlistConfig struct {
-	SeedPath string `env:"SEED_PATH"`
+	Path string `env:"PATH" envDefault:"./indexer.state.json"`
 }
 
 // HealthConfig governs the HTTP health/metrics server and the outbound

@@ -96,11 +96,21 @@ var errTipStalled = errors.New("RPC tip stalled")
 func Ingest(ctx context.Context, cfg *config.Config) error {
 	log.Ctx(ctx).Info(cfg.String())
 
-	// State store: persists the cursor (and, later, the escrow set). The
-	// flock makes a second instance fail fast instead of double-publishing.
-	store, err := state.NewFileStore(cfg.State.Path)
-	if err != nil {
-		return fmt.Errorf("opening state store: %w", err)
+	// State store: persists the cursor and the escrow set; the flock
+	// makes a second live instance fail fast instead of double-publishing.
+	// A replay run gets the NullStore instead — nothing persisted, no
+	// lock taken, so it can run NEXT TO the live indexer without moving
+	// its cursor or fighting its flock.
+	var store state.Store
+	if cfg.Replay {
+		store = state.NullStore{}
+		log.Ctx(ctx).Info("Replay mode: state is ephemeral — no cursor, no gaps, no lock")
+	} else {
+		fileStore, err := state.NewFileStore(cfg.State.Path)
+		if err != nil {
+			return fmt.Errorf("opening state store: %w", err)
+		}
+		store = fileStore
 	}
 	defer func() {
 		if cerr := store.Close(); cerr != nil {
@@ -169,6 +179,20 @@ func Ingest(ctx context.Context, cfg *config.Config) error {
 		}
 	}
 
+	// A replay additionally borrows the LIVE indexer's watchlist as a
+	// point-in-time copy (lock-free read): escrows created before the
+	// replayed range would otherwise miss their deposits, since discovery
+	// only re-finds escrows created inside it.
+	if cfg.Replay {
+		escrows, removed, werr := state.ReadOnlyWatchlist(cfg.State.Path)
+		if werr != nil {
+			return fmt.Errorf("reading watchlist for replay: %w", werr)
+		}
+		reg.SeedRemoved(removed)
+		reg.Seed(escrows)
+		log.Ctx(ctx).Infof("Replay watchlist: %d escrows (%d tombstoned) from %s", reg.Size(), len(removed), cfg.State.Path)
+	}
+
 	// Sink: where detected facts are delivered (noop or rabbitmq). Built
 	// before the RPC pool connects because gap evidence recorded by a
 	// connect-time clamp is published right after connecting. The
@@ -203,6 +227,14 @@ func Ingest(ctx context.Context, cfg *config.Config) error {
 			log.Ctx(ctx).Warnf("closing RPC pool: %v", cerr)
 		}
 	}()
+
+	// Progress tracker + Prometheus registry. Built before Connect so the
+	// pool's fetch-duration summary registers exactly once, ahead of any
+	// backend adoption. The tracker always exists (the loop reports to it
+	// unconditionally — no nil checks in the hot path).
+	tracker := health.NewTracker(cfg.Network.Name)
+	promRegistry := health.NewRegistry(tracker)
+	pool.Instrument(promRegistry)
 	onGap := func(gap state.Gap, clampedStart uint32) error {
 		gaps = append(gaps, gap)
 		// No LastLedgerHash on purpose: a clamp breaks the hash chain.
@@ -236,11 +268,6 @@ func Ingest(ctx context.Context, cfg *config.Config) error {
 
 	ledgerIndexer := indexer.NewIndexer(reg)
 
-	// Progress tracker + health server. The tracker always exists (the
-	// loop reports to it unconditionally — no nil checks in the hot
-	// path); the HTTP server only binds when enabled. Its lifetime is
-	// tied to ctx, same as the loop it observes.
-	tracker := health.NewTracker(cfg.Network.Name)
 	tracker.SetRPCEndpoint(pool.CurrentHost())
 
 	// Command plane: AMQP consumer and admin HTTP handlers VALIDATE and
@@ -256,7 +283,9 @@ func Ingest(ctx context.Context, cfg *config.Config) error {
 		network:  cfg.Network.Name,
 		now:      time.Now,
 	}
-	if cfg.Sink.Type == "rabbitmq" {
+	// Never in replay: a second consumer on the same queue would steal
+	// commands from the live indexer (competing-consumers semantics).
+	if cfg.Sink.Type == "rabbitmq" && !cfg.Replay {
 		go commands.Consume(ctx, commands.ConsumerConfig{
 			URL:      cfg.RabbitMQ.URL,
 			Exchange: cfg.RabbitMQ.CommandsExchange,
@@ -264,19 +293,29 @@ func Ingest(ctx context.Context, cfg *config.Config) error {
 		}, cmdCh)
 	}
 
-	if cfg.Health.Enabled {
+	// Health server: liveness/progress/status, Prometheus metrics, and —
+	// when ADMIN_TOKEN is set — the admin control surface. Its lifetime
+	// is tied to ctx, same as the loop it observes. A replay never binds
+	// it: the port belongs to the live indexer running next door.
+	if cfg.Health.Enabled && !cfg.Replay {
 		var admin http.Handler
 		if cfg.AdminToken != "" {
 			admin = commands.AdminHandler(cfg.AdminToken, commands.EnqueueInto(cmdCh), reg)
 		}
-		go health.Serve(ctx, fmt.Sprintf(":%d", cfg.Health.Port), tracker, admin)
+		go health.Serve(ctx, fmt.Sprintf(":%d", cfg.Health.Port), tracker, admin, health.MetricsHandler(promRegistry))
 	}
 
 	// Outbound dead-man's switch: a throttled ping after processed
 	// ledgers; the external monitor alerts on SILENCE, covering every
 	// way the loop can stop. Nil (no-op) when HEALTH_HEARTBEAT_URL is
-	// unset, so the call below needs no branching.
-	heartbeat := health.NewHeartbeat(cfg.Health.HeartbeatURL)
+	// unset, so the call below needs no branching. A replay NEVER beats:
+	// its pings would silence the alarm exactly when the live indexer is
+	// the one that died.
+	heartbeatURL := cfg.Health.HeartbeatURL
+	if cfg.Replay {
+		heartbeatURL = ""
+	}
+	heartbeat := health.NewHeartbeat(heartbeatURL)
 
 	// Chain-continuity anchor: on a resume EXACTLY at cursor+1, the first
 	// fetched ledger must link back (by parent hash) to the ledger this
@@ -416,6 +455,7 @@ func Ingest(ctx context.Context, cfg *config.Config) error {
 		// again next pass; turning a sweep 429 into a crash-loop would be
 		// worse than not sweeping at all. Publish failures stay fatal:
 		// sink loss is a different failure class than a flaky RPC read.
+		sweepPublished := 0
 		if cfg.Indexer.SweepEnabled && time.Since(ledgerClosedAt) <= sweepMaxLedgerAge {
 			batch, passDone := sweeper.NextBatch(currentLedger, stateDetector.KeyCost, processors.MaxLedgerEntryKeys)
 			if len(batch) > 0 {
@@ -428,6 +468,7 @@ func Ingest(ctx context.Context, cfg *config.Config) error {
 							return fmt.Errorf("publishing sweep state %s at ledger %d: %w", sc.EscrowID, currentLedger, err)
 						}
 					}
+					sweepPublished = len(sweepStates)
 					if passDone {
 						log.Ctx(ctx).Infof("Reconciliation sweep pass complete at ledger %d — watchlist=%d", currentLedger, reg.Size())
 					}
@@ -454,15 +495,18 @@ func Ingest(ctx context.Context, cfg *config.Config) error {
 		// on. At the tip it should sit around one close interval (~5-6s);
 		// a growing age means we are falling behind (or catching up).
 		log.Ctx(ctx).Infof("Processed ledger %d in %v (age %s) — known_escrows=%d escrow_events=%d state_changes=%d",
-			currentLedger, time.Since(started), time.Since(ledgerClosedAt).Round(100*time.Millisecond), reg.Size(), len(facts), len(states))
+			currentLedger, time.Since(started), time.Since(ledgerClosedAt).Round(100*time.Millisecond), reg.Size(), len(facts), len(states)+sweepPublished)
 
+		// Sweep-published states count as state changes: they went through
+		// the same sink and the consumer treats them identically, so
+		// state_changes_published_total must include them.
 		tracker.RecordLedger(health.Progress{
 			LedgerSeq:      currentLedger,
 			LedgerClosedAt: ledgerClosedAt,
 			Duration:       time.Since(started),
 			KnownEscrows:   reg.Size(),
 			Events:         len(facts),
-			StateChanges:   len(states),
+			StateChanges:   len(states) + sweepPublished,
 			Gaps:           len(gaps),
 		})
 		heartbeat.Beat(ctx)

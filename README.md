@@ -115,6 +115,8 @@ Served on `HEALTH_PORT` (default 8080) while the loop runs:
 - `GET /status` — the incident numbers: cursor, ledger age, active RPC
   endpoint (`rpc_endpoint`), pause state, escrows tracked, publish
   totals, recorded gaps, uptime.
+- `GET /metrics` — the same numbers in Prometheus format, plus the
+  ledger-fetch duration summary.
 
 When `ADMIN_TOKEN` is set, the same server also mounts the `/admin/*`
 control surface (bearer auth): track / remove / refresh escrows, bulk
@@ -155,6 +157,16 @@ go vet ./...    # static analysis
 go test ./...   # unit tests
 make build      # compile to bin/ingest
 ```
+
+## Replaying a ledger range
+
+`bin/ingest replay --from N --to M` re-publishes the events and
+deposits of a bounded range (e.g. to backfill a recorded gap) and can
+run NEXT TO the live indexer: it persists nothing, takes no lock,
+consumes no commands and never pings the heartbeat. It borrows the live
+watchlist as a point-in-time copy and refuses ranges no configured RPC
+endpoint serves in full — point `RPC_FALLBACK_URLS` at an archive
+provider for old history. Downstream dedupe absorbs the duplicates.
 
 ## Deployment
 

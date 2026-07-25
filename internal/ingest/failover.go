@@ -9,12 +9,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+
 	"github.com/Trustless-Work/Indexer/internal/config"
 	"github.com/Trustless-Work/Indexer/internal/state"
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	"github.com/stellar/go-stellar-sdk/ingest/ledgerbackend"
 	protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
 	"github.com/stellar/go-stellar-sdk/support/log"
+	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
 // rpcAPI is the slice of the Soroban RPC client surface the pool needs.
@@ -61,6 +64,12 @@ type rpcPool struct {
 	passphrase string
 	idx        int
 
+	// requireFullRange (replay runs) turns a clamp into an endpoint
+	// failure instead of a recorded gap: an explicitly requested range
+	// must be served whole or not at all — a deeper-retention fallback
+	// may still have it.
+	requireFullRange bool
+
 	backend ledgerbackend.LedgerBackend
 	client  rpcAPI
 
@@ -69,6 +78,14 @@ type rpcPool struct {
 	newClient  func(rawURL string) rpcAPI
 	newBackend func(rawURL string) (ledgerbackend.LedgerBackend, error)
 	now        func() time.Time
+
+	// fetchDuration, when set (see Instrument), observes each successful
+	// GetLedger. Owned by the POOL — not per backend — because the SDK's
+	// ledgerbackend.WithMetrics registers its summary on every call and
+	// would panic with a duplicate on the first rotation. One summary
+	// across every endpoint the pool ever adopts, same name, objectives
+	// and semantics (successful fetches only) as the SDK's.
+	fetchDuration prometheus.Summary
 }
 
 // newRPCPool builds the production pool from cfg. Blank fallback entries
@@ -82,9 +99,10 @@ func newRPCPool(cfg *config.Config) *rpcPool {
 		}
 	}
 	return &rpcPool{
-		urls:       urls,
-		passphrase: cfg.Network.Passphrase,
-		now:        time.Now,
+		urls:             urls,
+		passphrase:       cfg.Network.Passphrase,
+		requireFullRange: cfg.Replay,
+		now:              time.Now,
 		newClient: func(rawURL string) rpcAPI {
 			return rpcclient.NewClient(rawURL, &http.Client{Timeout: cfg.RPC.RequestTimeout})
 		},
@@ -202,6 +220,9 @@ func (p *rpcPool) connectEndpoint(ctx context.Context, i int, from, end uint32, 
 	if end != 0 && start > end {
 		return 0, fmt.Errorf("%s: cannot serve bounded range [%d, %d]: its oldest available ledger is %d", host, from, end, window.OldestLedger)
 	}
+	if gap != nil && p.requireFullRange {
+		return 0, fmt.Errorf("%s: cannot serve ledgers [%d, %d] of the requested range (oldest available: %d) — an archive endpoint can", host, gap.FromLedger, gap.ToLedger, window.OldestLedger)
+	}
 
 	backend, err = p.newBackend(rawURL)
 	if err != nil {
@@ -221,9 +242,42 @@ func (p *rpcPool) connectEndpoint(ctx context.Context, i int, from, end uint32, 
 
 	adopted = true
 	p.closeSession(ctx)
+	if p.fetchDuration != nil {
+		backend = timedBackend{LedgerBackend: backend, fetchDuration: p.fetchDuration}
+	}
 	p.backend, p.client, p.idx = backend, client, i
 	log.Ctx(ctx).Infof("RPC endpoint active: %s (%d of %d in pool)", host, i+1, len(p.urls))
 	return start, nil
+}
+
+// Instrument registers the ledger-fetch duration summary on reg and
+// starts timing every backend the pool adopts from now on. Call once,
+// before Connect.
+func (p *rpcPool) Instrument(reg *prometheus.Registry) {
+	summary := prometheus.NewSummary(prometheus.SummaryOpts{
+		Namespace: "indexer", Subsystem: "ingest", Name: "ledger_fetch_duration_seconds",
+		Help:       "duration of fetching ledgers from the ledger backend, sliding window = 10m",
+		Objectives: map[float64]float64{0.5: 0.05, 0.9: 0.01, 0.99: 0.001},
+	})
+	reg.MustRegister(summary)
+	p.fetchDuration = summary
+}
+
+// timedBackend observes successful GetLedger durations on the pool's
+// shared summary (the SDK WithMetrics semantics, rotation-safe).
+type timedBackend struct {
+	ledgerbackend.LedgerBackend
+	fetchDuration prometheus.Summary
+}
+
+func (b timedBackend) GetLedger(ctx context.Context, sequence uint32) (xdr.LedgerCloseMeta, error) {
+	started := time.Now()
+	lcm, err := b.LedgerBackend.GetLedger(ctx, sequence)
+	if err != nil {
+		return xdr.LedgerCloseMeta{}, err
+	}
+	b.fetchDuration.Observe(time.Since(started).Seconds())
+	return lcm, nil
 }
 
 // Backend returns the active ledger backend. Only valid after a

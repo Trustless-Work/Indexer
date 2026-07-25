@@ -24,7 +24,7 @@ func get(h http.Handler, path string) *httptest.ResponseRecorder {
 func TestReadyz_LifecycleOfTheLoop(t *testing.T) {
 	clock := newFakeClock()
 	tr := newTestTracker(clock)
-	h := Handler(tr, nil)
+	h := Handler(tr, nil, nil)
 
 	// Before the first ledger: not ready, with the reason saying so.
 	if rr := get(h, "/readyz"); rr.Code != http.StatusServiceUnavailable {
@@ -55,7 +55,7 @@ func TestReadyz_LifecycleOfTheLoop(t *testing.T) {
 }
 
 func TestHealthz_AlwaysOK(t *testing.T) {
-	h := Handler(newTestTracker(newFakeClock()), nil)
+	h := Handler(newTestTracker(newFakeClock()), nil, nil)
 	if rr := get(h, "/healthz"); rr.Code != http.StatusOK {
 		t.Fatalf("/healthz = %d, want 200", rr.Code)
 	}
@@ -75,7 +75,7 @@ func TestStatus_ReportsProgressNumbers(t *testing.T) {
 		Duration: 15 * time.Millisecond, KnownEscrows: 3, Events: 1, StateChanges: 1, Gaps: 1,
 	})
 
-	rr := get(Handler(tr, nil), "/status")
+	rr := get(Handler(tr, nil, nil), "/status")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("/status = %d, want 200", rr.Code)
 	}

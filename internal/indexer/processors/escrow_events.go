@@ -114,7 +114,17 @@ func (d *EscrowEventDetector) classify(ev xdr.ContractEvent) (EscrowEvent, bool)
 	}
 
 	// 2) SAC transfer whose recipient is a known escrow → a deposit.
-	if sym, ok := firstTopicSymbol(ev); ok && sym == transferTopic {
+	// TW-03 origin-side: the attributed escrow is BY CONSTRUCTION the
+	// event's `to` (topics[2]) — the consumer re-verifies the same
+	// invariant against the raw XDR and DLQs any mismatch, so both ends
+	// of the pipe enforce it independently. A well-formed SEP-41/SAC
+	// transfer also carries an Address in `from` (topics[1]); an event
+	// that merely spells "transfer" but lacks it is not a transfer and
+	// is not forwarded. What the origin CANNOT know is whether the
+	// emitting contract is the escrow's actual trustline token — that
+	// check needs per-escrow trustline knowledge and belongs to the
+	// consumer.
+	if sym, ok := firstTopicSymbol(ev); ok && sym == transferTopic && transferHasFromAddress(ev) {
 		if to, ok := transferToAddress(ev); ok && d.registry.IsEscrow(to) {
 			return EscrowEvent{Type: EscrowEventTypeDeposit, EscrowID: to, EventKind: "token_transfer"}, true
 		}
@@ -163,6 +173,21 @@ func transferToAddress(ev xdr.ContractEvent) (string, bool) {
 		return "", false
 	}
 	return addressFromScVal(topics[2])
+}
+
+// transferHasFromAddress reports whether topics[1] decodes as an Address —
+// mandatory in a real SEP-41/SAC transfer, absent in fabricated
+// transfer-shaped events (TW-03 origin-side shape check).
+func transferHasFromAddress(ev xdr.ContractEvent) bool {
+	if ev.Body.V != 0 || ev.Body.V0 == nil {
+		return false
+	}
+	topics := ev.Body.V0.Topics
+	if len(topics) < 3 {
+		return false
+	}
+	_, ok := addressFromScVal(topics[1])
+	return ok
 }
 
 // addressFromScVal decodes an ScVal carrying an ScAddress into its strkey

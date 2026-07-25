@@ -97,8 +97,10 @@ func consumeOnce(ctx context.Context, cfg ConsumerConfig, out chan<- Command) er
 	if err := ch.ExchangeDeclare(cfg.Exchange, "direct", true, false, false, false, nil); err != nil {
 		return fmt.Errorf("declare exchange %q: %w", cfg.Exchange, err)
 	}
+	// Quorum from birth (the queue shipped with the same release): no
+	// classic→quorum migration event, matching the core's queues.
 	queue := cfg.QueueName()
-	if _, err := ch.QueueDeclare(queue, true, false, false, false, nil); err != nil {
+	if _, err := ch.QueueDeclare(queue, true, false, false, false, amqp.Table{"x-queue-type": "quorum"}); err != nil {
 		return fmt.Errorf("declare queue %q: %w", queue, err)
 	}
 	if err := ch.QueueBind(queue, cfg.Network, cfg.Exchange, false, nil); err != nil {

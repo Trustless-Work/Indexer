@@ -13,6 +13,9 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
+	"fmt"
+	"math"
 	"os"
 	"os/signal"
 	"syscall"
@@ -45,19 +48,55 @@ func main() {
 	}
 }
 
-// run loads config, configures the logger, and delegates to
-// ingest.Ingest. Returns errors instead of calling Fatal so that
-// deferred Close calls in callees run cleanly.
+// run loads config, applies the optional subcommand, configures the
+// logger, and delegates to ingest.Ingest. Returns errors instead of
+// calling Fatal so that deferred Close calls in callees run cleanly.
 func run(ctx context.Context) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
 	}
 
+	// `indexer replay --from N --to M`: one-shot bounded re-publication
+	// of a ledger range (the Horizon `db reingest range` pattern). Runs
+	// NEXT TO the live indexer: nothing persisted, no flock, no command
+	// consumption, no heartbeat. Events and deposits only — a bounded
+	// run suppresses state snapshots by design (tip state stamped with
+	// historic ledgers would be wrong; the live sweep owns current
+	// state). Downstream dedupe absorbs the re-published messages.
+	if len(os.Args) > 1 && os.Args[1] == "replay" {
+		if err := applyReplayFlags(cfg, os.Args[2:]); err != nil {
+			return err
+		}
+	}
+
 	configureLogger(cfg)
 
 	log.Ctx(ctx).Info("Starting Indexer")
 	return ingest.Ingest(ctx, cfg)
+}
+
+// applyReplayFlags parses the replay subcommand flags into cfg.
+func applyReplayFlags(cfg *config.Config, args []string) error {
+	fs := flag.NewFlagSet("replay", flag.ContinueOnError)
+	from := fs.Uint64("from", 0, "first ledger of the range, inclusive (required)")
+	to := fs.Uint64("to", 0, "last ledger of the range, inclusive (required)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *from == 0 || *to == 0 {
+		return fmt.Errorf("replay requires --from and --to (both > 0)")
+	}
+	if *from > *to {
+		return fmt.Errorf("replay range is inverted: --from %d > --to %d", *from, *to)
+	}
+	if *to > math.MaxUint32 {
+		return fmt.Errorf("--to %d exceeds the ledger sequence range (max %d)", *to, uint32(math.MaxUint32))
+	}
+	cfg.Replay = true
+	cfg.Indexer.StartLedger = uint32(*from)
+	cfg.Indexer.EndLedger = uint32(*to)
+	return nil
 }
 
 // configureLogger applies cfg.Logging to both the global logrus

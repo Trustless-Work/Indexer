@@ -17,13 +17,16 @@ const shutdownGrace = 2 * time.Second
 
 // Handler returns the health HTTP routes for t, plus admin mounted
 // under /admin/ when non-nil (the control surface carries its own
-// auth). Split from Serve so tests can exercise the endpoints with
-// httptest and no real listener.
-func Handler(t *Tracker, admin http.Handler) http.Handler {
+// auth) and metrics at /metrics when non-nil. Split from Serve so tests
+// can exercise the endpoints with httptest and no real listener.
+func Handler(t *Tracker, admin, metrics http.Handler) http.Handler {
 	mux := http.NewServeMux()
 
 	if admin != nil {
 		mux.Handle("/admin/", admin)
+	}
+	if metrics != nil {
+		mux.Handle("GET /metrics", metrics)
 	}
 
 	// Liveness: the process is up. Nothing else — a hung loop still
@@ -64,8 +67,8 @@ func Handler(t *Tracker, admin http.Handler) http.Handler {
 // itself. The trade-off is explicit — with the server down, external
 // monitors see the service as unreachable and alert, which is the
 // correct outcome anyway.
-func Serve(ctx context.Context, addr string, t *Tracker, admin http.Handler) {
-	srv := &http.Server{Addr: addr, Handler: Handler(t, admin)}
+func Serve(ctx context.Context, addr string, t *Tracker, admin, metrics http.Handler) {
+	srv := &http.Server{Addr: addr, Handler: Handler(t, admin, metrics)}
 
 	go func() {
 		<-ctx.Done()
@@ -75,6 +78,9 @@ func Serve(ctx context.Context, addr string, t *Tracker, admin http.Handler) {
 	}()
 
 	routes := "/healthz /readyz /status"
+	if metrics != nil {
+		routes += " /metrics"
+	}
 	if admin != nil {
 		routes += " /admin/*"
 	}

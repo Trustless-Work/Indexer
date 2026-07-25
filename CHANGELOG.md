@@ -11,6 +11,34 @@ see `docs/event-schema.md`.
 ## [Unreleased]
 
 ### Added
+- Prometheus `/metrics` on the health server: a collector over the same
+  tracker snapshot that backs `/status` (current ledger, ledger age,
+  publish totals, gaps, ready/paused, uptime — all labelled by network)
+  plus `indexer_ingest_ledger_fetch_duration_seconds`, registered once
+  at the RPC pool level so it survives endpoint rotations (the SDK's
+  `ledgerbackend.WithMetrics` registers per call and would panic on the
+  first rotation — same metric, rotation-safe implementation).
+- `indexer replay --from N --to M`: one-shot bounded re-publication of
+  a ledger range (the Horizon `db reingest range` pattern). Runs next
+  to the live indexer: nothing persisted, no flock, no command
+  consumption (it would compete on the live queue), no heartbeat (its
+  pings would mask a dead live indexer). Borrows the live watchlist as
+  a lock-free point-in-time copy, refuses ranges no endpoint serves in
+  full, and is events/deposits-only by design (bounded runs suppress
+  state snapshots). Downstream dedupe absorbs the re-published copies.
+- Split state files: the hot cursor (~150 bytes, every checkpoint)
+  separated from the cold watchlist (escrows + tombstones + gaps,
+  rewritten only when its content changes), both marshaled compactly.
+  Before, every tip checkpoint rewrote and fsynced the whole combined
+  record — ~150KB per ledger at 2.5k escrows to move a 4-byte cursor.
+  Pre-split files migrate transparently on first load.
+- The reconciliation sweep's published states now count into
+  `state_changes_published_total` (they previously bypassed the
+  tracker).
+- TW-03 origin-side: deposit classification requires a well-formed
+  transfer (`from` must decode as an Address) and the envelope's escrow
+  is locked by test to the raw event's `to` — mirroring the consumer's
+  check so both ends of the pipe enforce the invariant independently.
 - Command plane (`internal/commands`): the indexer can now be told
   things at runtime instead of redeployed. Commands arrive over AMQP
   (direct exchange `stellar.commands` → queue
@@ -39,6 +67,18 @@ see `docs/event-schema.md`.
   nacks; `ErrSinkUnavailable` stays fatal-fast because a failed AMQP
   channel never recovers in-process — the crash-restart owns the redial
   (in-process reconnection evaluated and declined).
+- The indexer's command queue (`indexer.commands.<network>`) is a
+  QUORUM queue from birth, matching the core consumer's migrated
+  queues.
+
+### Removed
+- Dead configuration that announced nonexistent features:
+  `INDEXER_WORKERS`, `INDEXER_SKIP_TX_META`, `INDEXER_SKIP_TX_ENVELOPE`,
+  `STATE_RESET` and `WATCHLIST_SEED_PATH` were parsed and validated but
+  never read by any code path. (`ESCROW_SEED_PATH` remains the real
+  seed mechanism.)
+
+### Added (earlier this cycle)
 - Multi-RPC failover (`RPC_FALLBACK_URLS`): the RPC connection is now an
   ordered endpoint pool feeding both the ledger backend and the
   getLedgerEntries state fetches. When the active endpoint exhausts its

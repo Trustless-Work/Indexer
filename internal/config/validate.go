@@ -92,9 +92,6 @@ func (c *Config) Validate() error {
 	if c.Indexer.GetLedgersLimit <= 0 || c.Indexer.GetLedgersLimit > 200 {
 		errs = append(errs, fmt.Errorf("INDEXER_GET_LEDGERS_LIMIT must be in [1, 200] (stellar-rpc getLedgers cap; got %d)", c.Indexer.GetLedgersLimit))
 	}
-	if c.Indexer.Workers < 0 {
-		errs = append(errs, fmt.Errorf("INDEXER_WORKERS must be >= 0 (0 means auto; got %d)", c.Indexer.Workers))
-	}
 	if c.Indexer.EndLedger != 0 && c.Indexer.StartLedger > c.Indexer.EndLedger {
 		errs = append(errs, fmt.Errorf("INDEXER_START_LEDGER (%d) must be <= INDEXER_END_LEDGER (%d)", c.Indexer.StartLedger, c.Indexer.EndLedger))
 	}
