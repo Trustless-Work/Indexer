@@ -1,24 +1,35 @@
-// Package commands is the Indexer's control plane: the wire contract for
-// operator/API commands, the AMQP consumer that receives them, and the
-// authenticated admin HTTP surface.
+// Package commands is the Indexer's control plane: the command contract
+// and the authenticated admin HTTP surface that accepts them.
 //
-// Every entry point — AMQP consumer, admin HTTP — does exactly one
-// thing with a command: validate it and ENQUEUE it into a channel. The
-// ingest loop drains that channel between ledgers and executes; it stays
-// the single writer of the registry and the state file (the same
-// invariant the discovery pass and the detector rely on). No command is
-// ever applied from a second goroutine.
+// Commands are OPERATOR actions. There is exactly one way in — the
+// admin surface, behind ADMIN_TOKEN — and it does exactly one thing with
+// a command: validate it and ENQUEUE it into a channel. The ingest loop
+// drains that channel between ledgers and executes; it stays the single
+// writer of the registry and the state file (the same invariant the
+// discovery pass and the detector rely on). No command is ever applied
+// from a second goroutine.
+//
+// An AMQP consumer used to be a second way in, so the core API could
+// announce freshly deployed escrows. It was removed in the A1 audit fix:
+// on-chain discovery already registers a deployed escrow and publishes
+// its state within the SAME ledger (the deploy emits tw_init from the
+// escrow itself, and the discovery pass runs before detection precisely
+// so that works), so the announcement bought no measurable latency —
+// while handing anyone who could publish to the broker an unauthenticated
+// control channel into the pipeline. If a future need for automated
+// reconciliation appears, see the note in docs/control-plane.md: the
+// direction to reach for is the indexer PULLING from a source it
+// authenticates, not the broker pushing commands at it.
 package commands
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
 )
 
-// Kind names one command. Part of the wire contract with the core API
-// and operators — treat values as frozen.
+// Kind names one command. Part of the contract with operators and with
+// any tooling built on the admin surface — treat values as frozen.
 type Kind string
 
 const (
@@ -34,19 +45,19 @@ const (
 	// fetches and publishes the current state of each. Idempotent.
 	KindReseed Kind = "reseed"
 	// KindRemoveEscrow tombstones one escrow: it stops being tracked and
-	// discovery/seed cannot silently re-add it. Admin-only.
+	// discovery/seed cannot silently re-add it.
 	KindRemoveEscrow Kind = "remove_escrow"
 	// KindPause halts ledger processing for TTL (bounded); the loop keeps
 	// draining commands so resume works, /readyz reports 503 and the
 	// heartbeat goes silent — a paused indexer is DELIBERATELY noisy, so
-	// a forgotten pause cannot quietly recreate the outage. Admin-only.
+	// a forgotten pause cannot quietly recreate the outage.
 	KindPause Kind = "pause"
-	// KindResume lifts a pause before its TTL expires. Admin-only.
+	// KindResume lifts a pause before its TTL expires.
 	KindResume Kind = "resume"
 	// KindReconcile restarts the reconciliation sweep from the top with
 	// the changed-since filter disarmed: the current state of every
 	// tracked escrow is re-published over the following ledgers, budget
-	// intact. Admin-only.
+	// intact.
 	KindReconcile Kind = "reconcile"
 )
 
@@ -64,9 +75,9 @@ const MaxPauseTTL = time.Hour
 // DefaultPauseTTL applies when a pause arrives without a TTL.
 const DefaultPauseTTL = 10 * time.Minute
 
-// ErrInvalidCommand marks a command that failed validation. AMQP
-// consumers drop such messages (nack without requeue) — a malformed
-// command must never crash-loop or clog the queue.
+// ErrInvalidCommand marks a command that failed validation. The admin
+// surface answers 400 and never enqueues — a malformed command must
+// never reach the ingest loop.
 var ErrInvalidCommand = errors.New("invalid command")
 
 // Command is one validated control-plane instruction, ready for the
@@ -79,26 +90,10 @@ type Command struct {
 	ContractIDs []string `json:"contract_ids,omitempty"`
 	// TTLSeconds bounds a pause. 0 means DefaultPauseTTL.
 	TTLSeconds int `json:"ttl_seconds,omitempty"`
-	// RequestedBy is free-form provenance for the audit log ("core-api",
-	// an operator name). Never trusted for authorization.
+	// RequestedBy is free-form provenance for the audit log (an operator
+	// name, a runbook reference). Never trusted for authorization: the
+	// bearer token is what authenticates, this is only a label.
 	RequestedBy string `json:"requested_by,omitempty"`
-
-	// Source records which entry point accepted the command ("amqp",
-	// "admin"). Set by the receiving side, not the sender.
-	Source string `json:"-"`
-}
-
-// Parse decodes and validates one wire command (the AMQP message body
-// and the admin HTTP request body share this format).
-func Parse(body []byte) (Command, error) {
-	var cmd Command
-	if err := json.Unmarshal(body, &cmd); err != nil {
-		return Command{}, fmt.Errorf("%w: malformed JSON: %v", ErrInvalidCommand, err)
-	}
-	if err := cmd.Validate(); err != nil {
-		return Command{}, err
-	}
-	return cmd, nil
 }
 
 // Validate enforces per-kind argument requirements.

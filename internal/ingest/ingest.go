@@ -270,9 +270,11 @@ func Ingest(ctx context.Context, cfg *config.Config) error {
 
 	tracker.SetRPCEndpoint(pool.CurrentHost())
 
-	// Command plane: AMQP consumer and admin HTTP handlers VALIDATE and
-	// ENQUEUE only; the loop drains this channel between ledgers and
-	// executes, staying the single writer of registry and state.
+	// Command plane: the admin HTTP handlers VALIDATE and ENQUEUE only;
+	// the loop drains this channel between ledgers and executes, staying
+	// the single writer of registry and state. The admin surface is the
+	// only producer for this channel (see the commands package doc for
+	// why the AMQP consumer that used to feed it was removed).
 	cmdCh := make(chan commands.Command, commandQueueSize)
 	executor := &commandExecutor{
 		reg:      reg,
@@ -282,15 +284,6 @@ func Ingest(ctx context.Context, cfg *config.Config) error {
 		tracker:  tracker,
 		network:  cfg.Network.Name,
 		now:      time.Now,
-	}
-	// Never in replay: a second consumer on the same queue would steal
-	// commands from the live indexer (competing-consumers semantics).
-	if cfg.Sink.Type == "rabbitmq" && !cfg.Replay {
-		go commands.Consume(ctx, commands.ConsumerConfig{
-			URL:      cfg.RabbitMQ.URL,
-			Exchange: cfg.RabbitMQ.CommandsExchange,
-			Network:  cfg.Network.Name,
-		}, cmdCh)
 	}
 
 	// Health server: liveness/progress/status, Prometheus metrics, and —

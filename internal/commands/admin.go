@@ -31,6 +31,12 @@ type RegistryReader interface {
 // 202 Accepted therefore means "queued", never "done" — the audit log
 // carries the execution outcome.
 //
+// This is the ONLY way a command enters the pipeline. That is the whole
+// point of the A1 audit fix: while an AMQP consumer also fed this
+// channel, every command — including pause and remove_escrow — was
+// reachable by anyone who could publish to the broker, with no
+// authorization anywhere in the path.
+//
 // Auth: Authorization: Bearer <token>, compared in constant time. An
 // empty configured token disables the whole surface (the caller should
 // not even mount it; the in-handler guard is defence in depth).
@@ -38,7 +44,6 @@ func AdminHandler(token string, enqueue func(Command) error, reg RegistryReader)
 	mux := http.NewServeMux()
 
 	accept := func(w http.ResponseWriter, r *http.Request, cmd Command) {
-		cmd.Source = "admin"
 		if err := cmd.Validate(); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
