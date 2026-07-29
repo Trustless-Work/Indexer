@@ -159,11 +159,6 @@ type RabbitMQConfig struct {
 	URL               string `env:"URL"`
 	Exchange          string `env:"EXCHANGE" envDefault:"stellar.events"`
 	PublisherConfirms bool   `env:"PUBLISHER_CONFIRMS" envDefault:"true"`
-
-	// CommandsExchange is the direct exchange the indexer CONSUMES
-	// control commands from (queue indexer.commands.<network>, routing
-	// key <network>). Consumption runs whenever SINK_TYPE=rabbitmq.
-	CommandsExchange string `env:"COMMANDS_EXCHANGE" envDefault:"stellar.commands"`
 }
 
 // StateConfig governs the on-disk state files (cursor + watchlist; the

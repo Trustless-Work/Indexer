@@ -126,9 +126,11 @@ func (e *commandExecutor) execute(ctx context.Context, cmd commands.Command, las
 		outcome = "FAILED: " + err.Error()
 	}
 	// The audit line: every executed command leaves exactly one record
-	// with source, arguments, outcome and duration.
-	log.Ctx(ctx).Infof("Command executed: %s (source=%s requested_by=%q) -> %s [%s]",
-		cmd, cmd.Source, cmd.RequestedBy, outcome, e.now().Sub(started).Round(time.Millisecond))
+	// with arguments, outcome and duration. Every command is an
+	// authenticated operator action (the admin surface is the only way
+	// in), so the label worth recording is who asked, not which door.
+	log.Ctx(ctx).Infof("Command executed: %s (requested_by=%q) -> %s [%s]",
+		cmd, cmd.RequestedBy, outcome, e.now().Sub(started).Round(time.Millisecond))
 	return mutated, err
 }
 

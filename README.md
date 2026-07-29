@@ -121,10 +121,12 @@ Served on `HEALTH_PORT` (default 8080) while the loop runs:
 When `ADMIN_TOKEN` is set, the same server also mounts the `/admin/*`
 control surface (bearer auth): track / remove / refresh escrows, bulk
 reseed, TTL-bounded pause / resume, reconcile, and `GET /admin/registry`.
-The same commands arrive over AMQP (`stellar.commands` exchange) — the
-core API uses that path to announce new escrows instead of waiting for
-on-chain discovery. Either way commands are only queued at the edge; the
-ingest loop executes them between ledgers.
+This is the only way a command enters the pipeline, and commands are only
+queued at the edge — the ingest loop executes them between ledgers, so it
+stays the single writer of the watchlist and the state file. See
+[docs/control-plane.md](docs/control-plane.md) for what the surface is
+for, and why the AMQP command channel that used to sit beside it was
+removed.
 
 ## Project structure
 

@@ -88,9 +88,6 @@ func TestAdmin_RoutesEnqueueTheRightCommands(t *testing.T) {
 		if tt.contract != "" && got[0].ContractID != tt.contract {
 			t.Errorf("%s %s: contract = %q, want %q", tt.method, tt.path, got[0].ContractID, tt.contract)
 		}
-		if got[0].Source != "admin" {
-			t.Errorf("%s %s: source = %q, want admin", tt.method, tt.path, got[0].Source)
-		}
 	}
 }
 
@@ -103,6 +100,12 @@ func TestAdmin_InvalidBodyIsRejectedBeforeEnqueue(t *testing.T) {
 	}
 	if rr := adminReq(t, h, "POST", "/admin/pause", "tok", `{"ttl_seconds":999999}`); rr.Code != http.StatusBadRequest {
 		t.Errorf("pause over max ttl: status = %d, want 400", rr.Code)
+	}
+	// Body decoding is the admin surface's job since the AMQP consumer
+	// (which used to own it) was removed — so a truncated body must be
+	// rejected here, not panic or enqueue a zero-valued command.
+	if rr := adminReq(t, h, "POST", "/admin/escrows", "tok", `{"contract_id":`); rr.Code != http.StatusBadRequest {
+		t.Errorf("malformed JSON: status = %d, want 400", rr.Code)
 	}
 	if len(got) != 0 {
 		t.Fatalf("invalid commands must never enqueue; got %v", got)
