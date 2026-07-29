@@ -24,8 +24,11 @@ const (
 
 // backpressureSink wraps a sink.Sink with the loop's retry policy (the
 // Sink contract says the caller owns retries). Only ErrSinkPublishRejected
-// — a nack from a full queue, or a confirm timeout — is retried, with
-// 1s→60s backoff and no attempt cap: the broker is alive and will drain.
+// — a nack from a full queue — is retried, with 1s→60s backoff and no
+// attempt cap: the broker is alive and will drain. A slow broker never
+// reaches here: the sink waits for each message's own confirmation rather
+// than timing out (audit A2), so this path now sees genuine rejections
+// only.
 // Everything else passes through as fatal, each for its own reason:
 //
 //   - events.ErrEnvelopeInvalid: a bug in the producer, never transient.
