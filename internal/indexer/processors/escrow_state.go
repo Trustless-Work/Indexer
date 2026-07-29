@@ -9,6 +9,7 @@ import (
 	"github.com/Trustless-Work/Indexer/internal/indexer/registry"
 	protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
 	"github.com/stellar/go-stellar-sdk/strkey"
+	"github.com/stellar/go-stellar-sdk/support/log"
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
@@ -33,6 +34,34 @@ const maxLedgerEntryKeysPerRequest = MaxLedgerEntryKeys
 // candidateKeysPerEscrow is how many LedgerKeys escrowStateLedgerKeys
 // builds for an escrow whose storage shape we have not learned yet.
 const candidateKeysPerEscrow = 4
+
+// The mass-removal guard. An RPC that answers 200 with an empty (or
+// truncated) entry list is INDISTINGUISHABLE from one reporting that none
+// of the requested entries exist — both are "no entry came back". Without
+// a guard the second reading wins and every escrow in the batch is
+// published as removed, which the consumer applies to real rows.
+//
+// So we judge by plausibility instead. Escrows expire and get withdrawn
+// INDEPENDENTLY, and the sweep walks the watchlist in contract-id order,
+// which bears no relation to creation time or TTL. A batch where most
+// entries vanished at once is therefore a broken provider, not the chain.
+//
+// The asymmetry decides the tie: losing one reconciliation pass costs a
+// few seconds and the next pass fixes it, while marking the watchlist
+// removed corrupts the read-model for every escrow at once.
+const (
+	// removalGuardMinBatch is the smallest batch the guard applies to.
+	// Below it, an all-absent answer is perfectly organic — the per-ledger
+	// activity path asks about the one or two escrows that just moved, and
+	// one of them really can have just been withdrawn.
+	removalGuardMinBatch = 10
+	// removalGuardMaxAbsentRatio is how much of a batch may come back
+	// empty before we stop believing it. Above half of a batch of ten or
+	// more disappearing in a single ledger has no organic explanation,
+	// while a genuinely large cleanup spread across the rotation stays
+	// well under it and is reported normally.
+	removalGuardMaxAbsentRatio = 0.5
+)
 
 // EscrowStateChange is the current state of one known escrow's
 // DataKey::Escrow entry as fetched from the Soroban RPC right after a
@@ -75,6 +104,11 @@ type EscrowStateDetector struct {
 	// detector lives on the single ingest goroutine (same invariant as
 	// the registry writes).
 	learned map[string]string
+	// suppressedRemovals counts removals withheld by the plausibility
+	// guard since boot. Surfaced through SuppressedRemovals so the loop
+	// can report it: a guard that fires silently would trade one
+	// invisible failure for another.
+	suppressedRemovals int
 }
 
 // NewEscrowStateDetector builds a state detector that queries the given
@@ -141,8 +175,47 @@ func (d *EscrowStateDetector) fetchStates(ctx context.Context, escrowIDs []strin
 
 	// Order matters: judge absence over the UNFILTERED set (an unchanged
 	// escrow dropped by the filter must not look removed), then filter.
+	missing := missingFrom(requested, changes)
+	if isImplausibleRemovalBatch(len(requested), len(missing)) {
+		d.suppressedRemovals += len(missing)
+		log.Ctx(ctx).Errorf(
+			"Refusing to publish %d removals at ledger %d: %d of %d escrows in this batch answered with no entry at all. "+
+				"Escrows do not disappear together, so this reads as an RPC endpoint returning an empty or truncated result, not as on-chain removals. "+
+				"State updates from the same response are still published; the next sweep pass re-checks these escrows. "+
+				"If it repeats, the endpoint (%s) is the thing to look at.",
+			len(missing), ledgerSeq, len(missing), len(requested), d.rpcName())
+		sortByEscrowID(changes)
+		return filterUnchanged(changes, modifiedSince), nil
+	}
+
 	all := appendRemoved(requested, changes, ledgerSeq, ledgerClosedAt)
 	return filterUnchanged(all, modifiedSince), nil
+}
+
+// isImplausibleRemovalBatch reports whether a batch answering with this
+// many absences should be read as a provider fault rather than as removals.
+// Pure, so the policy can be unit-tested without an RPC.
+func isImplausibleRemovalBatch(requested, missing int) bool {
+	if requested < removalGuardMinBatch {
+		return false
+	}
+	return float64(missing) > float64(requested)*removalGuardMaxAbsentRatio
+}
+
+// SuppressedRemovals counts the removals this detector refused to publish
+// because their batch failed the plausibility guard. Monotonic since boot;
+// the loop reports it so /status and Prometheus surface it. A number that
+// keeps climbing means an RPC endpoint is answering with empty results.
+func (d *EscrowStateDetector) SuppressedRemovals() int { return d.suppressedRemovals }
+
+// rpcName describes the RPC source for the guard's log line, when it can.
+// The detector reads through an interface precisely so it does not care
+// which endpoint answers, so this is best-effort.
+func (d *EscrowStateDetector) rpcName() string {
+	if named, ok := d.rpc.(interface{ CurrentHost() string }); ok {
+		return named.CurrentHost()
+	}
+	return "current RPC endpoint"
 }
 
 // queryEntries turns escrow ids into getLedgerEntries calls — one learned
@@ -259,8 +332,15 @@ func appendRemoved(requested []string, present []EscrowStateChange, ledgerSeq ui
 		})
 	}
 	// Keep the stable by-EscrowID order buildStateChanges promises.
-	sort.Slice(out, func(i, j int) bool { return out[i].EscrowID < out[j].EscrowID })
+	sortByEscrowID(out)
 	return out
+}
+
+// sortByEscrowID imposes the stable publish order every path promises.
+// Shared so the guarded path, which skips appendRemoved, still returns the
+// merged relearn results in the same order as the normal one.
+func sortByEscrowID(changes []EscrowStateChange) {
+	sort.Slice(changes, func(i, j int) bool { return changes[i].EscrowID < changes[j].EscrowID })
 }
 
 // chunkStrings splits s into consecutive slices of at most size elements.

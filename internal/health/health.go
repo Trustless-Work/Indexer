@@ -39,6 +39,10 @@ type Progress struct {
 	Events         int
 	StateChanges   int
 	Gaps           int
+	// SuppressedRemovals is the running count of removals the state
+	// detector refused to publish because their batch failed the
+	// plausibility guard (an RPC answering with an empty result set).
+	SuppressedRemovals int
 }
 
 // Status is the read-side snapshot served by /status. Ages are computed
@@ -72,6 +76,10 @@ type Status struct {
 	EventsPublished       int `json:"events_published_total"`
 	StateChangesPublished int `json:"state_changes_published_total"`
 	Gaps                  int `json:"gaps_recorded"`
+	// SuppressedRemovals climbing means an RPC endpoint is answering with
+	// empty results and the guard is protecting the read-model from a
+	// mass false removal. Steady at zero is the healthy state.
+	SuppressedRemovals int `json:"suppressed_removals"`
 
 	UptimeSeconds float64 `json:"uptime_seconds"`
 }
@@ -82,19 +90,20 @@ type Tracker struct {
 	// now is injected for tests; time.Now in production.
 	now func() time.Time
 
-	mu              sync.Mutex
-	network         string
-	rpcEndpoint     string
-	startedAt       time.Time
-	currentLedger   uint32
-	ledgerClosedAt  time.Time
-	lastProcessedAt time.Time
-	lastDuration    time.Duration
-	knownEscrows    int
-	eventsTotal     int
-	statesTotal     int
-	gaps            int
-	pausedUntil     time.Time
+	mu                 sync.Mutex
+	network            string
+	rpcEndpoint        string
+	startedAt          time.Time
+	currentLedger      uint32
+	ledgerClosedAt     time.Time
+	lastProcessedAt    time.Time
+	lastDuration       time.Duration
+	knownEscrows       int
+	eventsTotal        int
+	statesTotal        int
+	gaps               int
+	suppressedRemovals int
+	pausedUntil        time.Time
 }
 
 // NewTracker builds a Tracker for the given network label.
@@ -137,6 +146,7 @@ func (t *Tracker) RecordLedger(p Progress) {
 	t.eventsTotal += p.Events
 	t.statesTotal += p.StateChanges
 	t.gaps = p.Gaps
+	t.suppressedRemovals = p.SuppressedRemovals
 }
 
 // Snapshot returns the current Status.
@@ -159,6 +169,7 @@ func (t *Tracker) Snapshot() Status {
 		EventsPublished:       t.eventsTotal,
 		StateChangesPublished: t.statesTotal,
 		Gaps:                  t.gaps,
+		SuppressedRemovals:    t.suppressedRemovals,
 		UptimeSeconds:         now.Sub(t.startedAt).Seconds(),
 	}
 	if s.Paused {

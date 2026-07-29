@@ -41,6 +41,7 @@ type trackerCollector struct {
 	eventsTotal   *prometheus.Desc
 	statesTotal   *prometheus.Desc
 	gaps          *prometheus.Desc
+	suppressed    *prometheus.Desc
 	ready         *prometheus.Desc
 	paused        *prometheus.Desc
 	uptime        *prometheus.Desc
@@ -64,6 +65,7 @@ func newTrackerCollector(t *Tracker) *trackerCollector {
 		eventsTotal:   desc("events_published_total", "Escrow events and deposits published since boot."),
 		statesTotal:   desc("state_changes_published_total", "State snapshots published since boot (activity + sweep + commands)."),
 		gaps:          desc("gaps_recorded", "Ledger ranges knowingly skipped and recorded as gap evidence."),
+		suppressed:    desc("suppressed_removals_total", "Removals withheld because their batch failed the plausibility guard (an RPC answering with an empty result set). Anything above zero warrants looking at the RPC endpoint."),
 		ready:         desc("ready", "1 when the loop is demonstrably advancing (the /readyz semantic)."),
 		paused:        desc("paused", "1 while an operator pause is in effect."),
 		uptime:        desc("uptime_seconds", "Process uptime."),
@@ -73,7 +75,8 @@ func newTrackerCollector(t *Tracker) *trackerCollector {
 func (c *trackerCollector) Describe(ch chan<- *prometheus.Desc) {
 	for _, d := range []*prometheus.Desc{
 		c.currentLedger, c.ledgerAge, c.sinceLast, c.knownEscrows,
-		c.eventsTotal, c.statesTotal, c.gaps, c.ready, c.paused, c.uptime,
+		c.eventsTotal, c.statesTotal, c.gaps, c.suppressed, c.ready, c.paused,
+		c.uptime,
 	} {
 		ch <- d
 	}
@@ -101,6 +104,7 @@ func (c *trackerCollector) Collect(ch chan<- prometheus.Metric) {
 	counter(c.eventsTotal, float64(s.EventsPublished))
 	counter(c.statesTotal, float64(s.StateChangesPublished))
 	gauge(c.gaps, float64(s.Gaps))
+	counter(c.suppressed, float64(s.SuppressedRemovals))
 	gauge(c.ready, b2f(s.Ready))
 	gauge(c.paused, b2f(s.Paused))
 	gauge(c.uptime, s.UptimeSeconds)
