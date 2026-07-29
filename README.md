@@ -114,7 +114,10 @@ Served on `HEALTH_PORT` (default 8080) while the loop runs:
   monitors here.
 - `GET /status` — the incident numbers: cursor, ledger age, active RPC
   endpoint (`rpc_endpoint`), pause state, escrows tracked, publish
-  totals, recorded gaps, uptime.
+  totals, recorded gaps, `suppressed_removals`, uptime.
+  `suppressed_removals` above zero means an RPC endpoint answered with an
+  empty result set and the plausibility guard stopped it from publishing
+  the whole batch as removed — look at the endpoint, not at the escrows.
 - `GET /metrics` — the same numbers in Prometheus format, plus the
   ledger-fetch duration summary.
 

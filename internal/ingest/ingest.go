@@ -501,6 +501,9 @@ func Ingest(ctx context.Context, cfg *config.Config) error {
 			Events:         len(facts),
 			StateChanges:   len(states) + sweepPublished,
 			Gaps:           len(gaps),
+			// Absolute since boot, like Gaps: a guard that fires without
+			// leaving a number behind would be a silent failure of its own.
+			SuppressedRemovals: stateDetector.SuppressedRemovals(),
 		})
 		heartbeat.Beat(ctx)
 
