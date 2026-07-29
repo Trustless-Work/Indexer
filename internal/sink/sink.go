@@ -43,10 +43,12 @@ var (
 	// crash-restart) can recover.
 	ErrSinkUnavailable = errors.New("sink unavailable")
 	// ErrSinkPublishRejected signals the broker explicitly rejected the
-	// publish (a nack — e.g. a full queue with a reject-publish overflow
-	// policy — or a confirm timeout). The channel stays usable, so this
-	// IS the class a caller may retry with backoff: backpressure, not
-	// breakage.
+	// publish: a nack, e.g. a full queue with a reject-publish overflow
+	// policy. The channel stays usable, so this IS the class a caller may
+	// retry with backoff: backpressure, not breakage. A slow broker no
+	// longer lands here — a publish now waits for its own confirmation
+	// however long that takes, instead of giving up and letting the late
+	// answer be charged to the next message (audit A2).
 	ErrSinkPublishRejected = errors.New("sink publish rejected")
 	// ErrSinkUnroutable signals the broker accepted the publish but no
 	// queue was bound to receive it (basic.return on a mandatory

@@ -1,7 +1,5 @@
 package rabbitmq
 
-import "time"
-
 // Config holds what the RabbitMQ sink needs. It is populated by the
 // factory from the global config; the sink never reads env vars.
 type Config struct {
@@ -13,16 +11,7 @@ type Config struct {
 	Exchange string
 	// PublisherConfirms enables RabbitMQ publisher confirms (at-least-once):
 	// Publish blocks on a positive broker ack before returning success.
-	// Recommended for production.
+	// Recommended for production — without it a publish is fire-and-forget
+	// and the cursor advances over anything the broker quietly drops.
 	PublisherConfirms bool
-	// PublishConfirmTimeout bounds how long Publish waits for an ack when
-	// PublisherConfirms is enabled. Defaults to 10s when zero.
-	PublishConfirmTimeout time.Duration
-}
-
-func (c Config) withDefaults() Config {
-	if c.PublishConfirmTimeout == 0 {
-		c.PublishConfirmTimeout = 10 * time.Second
-	}
-	return c
 }
