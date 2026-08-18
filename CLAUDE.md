@@ -83,7 +83,9 @@ See `.claude/skills/envelope-contract-change`.
   (`[Unreleased]`) for anything user-visible or operational.
 - Code, comments, docs and ALL git artefacts are in **English**, even when the
   conversation is in Spanish. No AI trailers or mentions anywhere.
-  See `.claude/skills/finish-work` for the closing package.
+  The closing package and the cross-repo rules come from the `caleb-workflow` plugin
+  (`finish-work`, `workflow-rules`, push-to-main hook) — install it from
+  `github.com/zkCaleb-dev/claude-plugins`; repo-specific skills stay in `.claude/skills/`.
 - Auxiliary tooling lives in a SEPARATE repo, never under this one. Ask where first.
 - Sibling repos: `trustlesswork-core-api` (consumer), `trustlesswork-probe` (e2e against
   deployed environments; measures indexer→read-model lag, ~0.6 s on testnet).
