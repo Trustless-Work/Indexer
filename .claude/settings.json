@@ -1,0 +1,39 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(go test *)",
+      "Bash(go vet *)",
+      "Bash(go build *)",
+      "Bash(gofmt -l *)",
+      "Bash(make test*)",
+      "Bash(make vet*)",
+      "Bash(make build*)",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git branch*)",
+      "Bash(git show*)"
+    ],
+    "deny": [
+      "Bash(rm * indexer.state*)",
+      "Bash(make reset-state*)",
+      "Bash(railway *)",
+      "Read(./.env)",
+      "Read(./indexer.state.json)",
+      "Read(./indexer.watchlist.seed.json)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/block-push-main.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
