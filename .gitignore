@@ -22,3 +22,6 @@ indexer.watchlist.seed.json
 /indexer
 /ingest
 bin/
+# AI assistant per-machine state (shared context in .claude/ is versioned)
+.claude/settings.local.json
+.claude/launch.json
