@@ -4,17 +4,31 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 )
 
-// fakeClock drives the Tracker deterministically.
-type fakeClock struct{ t time.Time }
+// fakeClock drives the Tracker deterministically. Guarded by a mutex because
+// Heartbeat.Beat reads it from its ping goroutine while tests advance it.
+type fakeClock struct {
+	mu sync.Mutex
+	t  time.Time
+}
 
-func (c *fakeClock) now() time.Time          { return c.t }
-func (c *fakeClock) advance(d time.Duration) { c.t = c.t.Add(d) }
-func newFakeClock() *fakeClock               { return &fakeClock{t: time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)} }
-func newTestTracker(c *fakeClock) *Tracker   { return newTrackerAt("testnet", c.now) }
+func (c *fakeClock) now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.t
+}
+
+func (c *fakeClock) advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.t = c.t.Add(d)
+}
+func newFakeClock() *fakeClock             { return &fakeClock{t: time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)} }
+func newTestTracker(c *fakeClock) *Tracker { return newTrackerAt("testnet", c.now) }
 func get(h http.Handler, path string) *httptest.ResponseRecorder {
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, path, nil))
