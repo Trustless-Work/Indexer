@@ -10,6 +10,15 @@ see `docs/event-schema.md`.
 
 ## [Unreleased]
 
+### Fixed
+- Upgrade `go-stellar-sdk` v0.6.0 to v0.7.3 so the XDR codec understands the
+  new protocol ledger format. The old SDK could not decode `ScValType`
+  variant 22 (`SCV_EXECUTABLE_TAG`), which froze ingestion on any ledger
+  that carried it — testnet stalled at ledger 4372189 retrying the same
+  unmarshal indefinitely. Mainnet has not upgraded yet but would hit the
+  same wall; this lifts it for both networks. No source changes were needed
+  beyond guarding a pre-existing test clock against the race detector.
+
 ### Added
 - Prometheus `/metrics` on the health server: a collector over the same
   tracker snapshot that backs `/status` (current ledger, ledger age,
