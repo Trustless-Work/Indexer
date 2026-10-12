@@ -155,6 +155,14 @@ type SinkConfig struct {
 	// everything and is the default for dev to avoid requiring a
 	// broker.
 	Type string `env:"TYPE" envDefault:"noop"`
+
+	// RequireSigning, when true, makes boot refuse to start without an
+	// ENVELOPE_HMAC_KEY — the guard against silently publishing unsigned
+	// after the core API switches its verification to enforce mode. The
+	// default MUST stay false until that switch: flipping it in a release
+	// would turn every deploy missing the env var into an outage.
+	// Env: SINK_REQUIRE_SIGNING.
+	RequireSigning bool `env:"REQUIRE_SIGNING"`
 }
 
 // RabbitMQConfig configures the RabbitMQ sink. Only consumed when

@@ -46,7 +46,7 @@ already analyzed and rejected for a stated reason.
 | W6 | State Load: orphan-watchlist merge | ✅ | `fix/w6-orphan-watchlist` |
 | W7 | Chain-data robustness (recover, tx success, strkey) | ✅ | `security/w7-chain-data-robustness` |
 | W8 | Threat model document | ✅ | `docs/w8-threat-model` |
-| W9 | HMAC key rotation (cross-repo) | ☐ | |
+| W9 | HMAC key rotation (cross-repo) | ✅ indexer side | `security/w9-hmac-rotation` (core-api mirror pending) |
 
 ---
 
@@ -378,11 +378,11 @@ incident.
    outage for any deploy missing the env var.
 
 **Checklist:**
-- [ ] Runbook written and reviewed (both repos)
-- [ ] kid header emitted; cross-repo vectors green on both sides
-- [ ] core-api mirror PR: dual-key verify by kid
-- [ ] require-signing flag, default false, covered by test
-- [ ] event-schema.md updated
+- [x] Runbook written: `docs/hmac-key-rotation.md` — rotation order (core adds key → indexer rotates → redrive DLQ → core removes old), the DLQ failure mode it prevents, the fingerprint derivation, the consumer requirements spec, and the enforce-mode rollout
+- [x] kid header emitted (recomputed per publish so it can never drift from the signing key); fingerprint vector pinned in the indexer tests
+- [ ] core-api mirror PR: verify-set keyed by fingerprint, selection by kid, try-all fallback without kid, mirrored vector — requirements spec in the runbook's "Consumer requirements" section; implement from a session in that repo
+- [x] require-signing flag, default false (tested), boot-refusal with flag and no key (tested)
+- [x] event-schema.md updated (Key id bullet; classification: additive transport metadata, no schema bump — same class as x-tw-sig itself)
 
 ---
 

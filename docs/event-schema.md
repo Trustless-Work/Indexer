@@ -50,6 +50,13 @@ Trustless Work NestJS API — rely on to build their views.
   `schema_version` are unaffected. The header is absent when the Indexer
   has no key configured; the consumer decides per its verification mode
   (off / log / enforce) whether a missing or invalid signature is fatal.
+- **Key id**: signed messages also carry `x-tw-sig-kid` — the first 8
+  bytes of `SHA-256(key)`, lowercase hex (16 chars) — so the consumer
+  can hold a verify-set of several keys during a rotation and select
+  the right one per message. Additive: a verifier that ignores it keeps
+  working with a single key, and messages published before this header
+  existed verify via try-all-keys fallback. Procedure and consumer
+  requirements: `docs/hmac-key-rotation.md`.
 
 ## Envelope: common header
 
