@@ -41,7 +41,7 @@ already analyzed and rejected for a stated reason.
 | W1 | Dead code removal & truthful metadata | ✅ | `chore/w1-dead-code-and-metadata` |
 | W2 | CI parity (race, staticcheck, gosec, govulncheck) | ✅ | `ci/w2-parity` |
 | W3 | Loop invariant test (publish-fails ⇒ no Save) | ✅ | `test/w3-loop-invariant` |
-| W4 | Secret & transport validation | ☐ | |
+| W4 | Secret & transport validation | ✅ | `security/w4-secret-validation` |
 | W5 | HTTP server timeouts | ✅ | folded into `ci/w2-parity` (see W5 note) |
 | W6 | State Load: orphan-watchlist merge | ☐ | |
 | W7 | Chain-data robustness (recover, tx success, strkey) | ☐ | |
@@ -190,11 +190,11 @@ heartbeat redaction (undiagnosable dead-man's switch); merging without the
 pre-flight checks (crash-loop in prod caused by the fix itself).
 
 **Checklist:**
-- [ ] Pre-flight checks done and recorded in the PR (token length, broker scheme, HMAC key length both repos)
-- [ ] empty-OR-≥16 / empty-OR-≥32 validations with boot-refusal tests for short-but-nonempty and pass tests for empty
-- [ ] Heartbeat URL renders host, hides path (test on the config dump)
-- [ ] amqp:// warning fires (test), amqps and empty stay silent
-- [ ] CHANGELOG migration note (operators with short secrets must rotate before deploying)
+- [ ] Pre-flight checks done and recorded in the PR (token length, broker scheme, HMAC key length both repos) — MANUAL: the operator verifies against Railway before merging; commands are in the PR description
+- [x] empty-OR-≥16 / empty-OR-≥32 validations with boot-refusal tests for short-but-nonempty and pass tests for empty, plus a test that validation errors never echo the secret value
+- [x] Heartbeat URL renders host, hides path (`secret:"path"` tag); malformed values hide entirely; tests on the config dump
+- [x] amqp:// warning at sink construction (warning, never an error — the simulation's InsecureSkipVerify rationale is in the code comment)
+- [x] CHANGELOG migration note (operators with short secrets must rotate before deploying)
 
 ## W5 — HTTP server timeouts
 

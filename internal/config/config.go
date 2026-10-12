@@ -182,10 +182,12 @@ type HealthConfig struct {
 	// HeartbeatURL, when set, receives a throttled GET after processed
 	// ledgers (dead-man's switch: the external monitor alerts on
 	// silence). Provider-agnostic — any service that accepts a ping URL
-	// works (Better Stack, Healthchecks.io, UptimeRobot). Treat the URL
-	// as a secret: whoever holds it can silence the alarm.
-	// Env: HEALTH_HEARTBEAT_URL.
-	HeartbeatURL string `env:"HEARTBEAT_URL"`
+	// works (Better Stack, Healthchecks.io, UptimeRobot). The URL IS the
+	// secret — providers put it in the path, and whoever holds it can
+	// silence the alarm — so the boot config dump prints scheme and host
+	// only (secret:"path"): enough to spot a mistyped provider, nothing
+	// that silences the switch. Env: HEALTH_HEARTBEAT_URL.
+	HeartbeatURL string `env:"HEARTBEAT_URL" secret:"path"`
 }
 
 // LoggingConfig governs the logger.
