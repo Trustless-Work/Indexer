@@ -10,7 +10,33 @@ see `docs/event-schema.md`.
 
 ## [Unreleased]
 
+### Added
+- `/status` now reports the build version (`version` field). The Dockerfile
+  already stamped builds via `-X` ldflag, but the target variable did not
+  exist, so the stamp was silently ignored and `/status` had no version
+  field; both ends are now wired (unstamped builds report `"dev"`).
+- Hardening work plan at `docs/hardening-plan.md`: ordered work items with
+  per-item designs, rejected alternatives and progress checkboxes.
+
+### Removed
+- `STRICT_MODE` env var: it was parsed, printed at boot and read by
+  nothing — the documented skip-on-error behaviour never existed. Fatal
+  error handling is unchanged; deployments that set the variable need no
+  action (it is now simply ignored, which it effectively always was).
+- `INDEXER_LEDGER_BACKEND_TYPE=datastore`: the stub was never implemented
+  (it only errored at startup) and its future wiring kept unexercised
+  `aws-sdk-go-v2` code reachable for vulnerability scanners. `"rpc"`
+  remains the only (and default) value.
+- Dead inherited code in `internal/utils` (SQL null helpers, unused HTTP
+  client, unused ledger-key builders and address helpers). No behaviour
+  change; `DeferredClose` and `IsContractAddress` remain.
+
 ### Fixed
+- Stale documentation: `docs/event-schema.md`'s opening status block said
+  the Indexer does not publish yet (it has for months — the shape sections
+  were already current); the `internal/ingest` package doc described a
+  pre-sink state of the code; `.env.example` and the Railway guide
+  documented the removed `STRICT_MODE`.
 - Upgrade `go-stellar-sdk` v0.6.0 to v0.7.3 so the XDR codec understands the
   new protocol ledger format. The old SDK could not decode `ScValType`
   variant 22 (`SCV_EXECUTABLE_TAG`), which froze ingestion on any ledger

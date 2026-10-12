@@ -10,8 +10,7 @@ import (
 // Supported enum values, centralized so Validate stays declarative.
 var (
 	validLedgerBackendTypes = map[string]struct{}{
-		"rpc":       {},
-		"datastore": {},
+		"rpc": {},
 	}
 	validSinkTypes = map[string]struct{}{
 		"noop":     {},
@@ -96,7 +95,7 @@ func (c *Config) Validate() error {
 		errs = append(errs, fmt.Errorf("INDEXER_START_LEDGER (%d) must be <= INDEXER_END_LEDGER (%d)", c.Indexer.StartLedger, c.Indexer.EndLedger))
 	}
 	if _, ok := validLedgerBackendTypes[c.Indexer.LedgerBackendType]; !ok {
-		errs = append(errs, fmt.Errorf("INDEXER_LEDGER_BACKEND_TYPE must be one of [rpc datastore]; got %q", c.Indexer.LedgerBackendType))
+		errs = append(errs, fmt.Errorf("INDEXER_LEDGER_BACKEND_TYPE must be \"rpc\"; got %q", c.Indexer.LedgerBackendType))
 	}
 
 	// --- Escrow identity ---

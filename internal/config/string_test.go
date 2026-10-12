@@ -77,25 +77,9 @@ func TestString_IncludesAllTopLevelDomains(t *testing.T) {
 	out := cfg.String()
 	// Every nested struct should appear at least once. Spot-check the
 	// names operators will look for.
-	for _, needle := range []string{"Network.", "RPC.", "Indexer.", "Sink.", "RabbitMQ.", "State.", "Health.", "Logging.", "StrictMode"} {
+	for _, needle := range []string{"Network.", "RPC.", "Indexer.", "Sink.", "RabbitMQ.", "State.", "Health.", "Logging."} {
 		if !strings.Contains(out, needle) {
 			t.Errorf("String output missing domain %q; got:\n%s", needle, out)
 		}
-	}
-}
-
-func TestString_ShowsStrictModeValue(t *testing.T) {
-	withEnv(t, map[string]string{
-		"RPC_URL":     "https://soroban-testnet.stellar.org",
-		"STRICT_MODE": "false",
-	})
-	cfg, err := Load()
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-
-	out := cfg.String()
-	if !strings.Contains(out, "StrictMode=false") {
-		t.Errorf("expected StrictMode=false in output; got:\n%s", out)
 	}
 }

@@ -50,6 +50,10 @@ type Progress struct {
 // doing clock math.
 type Status struct {
 	Network string `json:"network"`
+	// Version is the build stamp (Dockerfile -X ldflag; "dev" when
+	// unstamped) — answers "which build is running?" without shell
+	// access to the container.
+	Version string `json:"version,omitempty"`
 	// RPCEndpoint is the HOST of the RPC endpoint currently feeding the
 	// loop — the first question in an incident once failover exists.
 	// Host only: full provider URLs can carry credentials.
@@ -92,6 +96,7 @@ type Tracker struct {
 
 	mu                 sync.Mutex
 	network            string
+	version            string
 	rpcEndpoint        string
 	startedAt          time.Time
 	currentLedger      uint32
@@ -114,6 +119,14 @@ func NewTracker(network string) *Tracker {
 // newTrackerAt is the test seam: it lets tests drive the clock.
 func newTrackerAt(network string, now func() time.Time) *Tracker {
 	return &Tracker{now: now, network: network, startedAt: now()}
+}
+
+// SetVersion reports the build stamp shown in /status. Called once at
+// boot.
+func (t *Tracker) SetVersion(version string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.version = version
 }
 
 // SetRPCEndpoint reports which RPC endpoint (host) currently feeds the
@@ -159,6 +172,7 @@ func (t *Tracker) Snapshot() Status {
 
 	s := Status{
 		Network:               t.network,
+		Version:               t.version,
 		RPCEndpoint:           t.rpcEndpoint,
 		Ready:                 ready,
 		ReadyReason:           reason,

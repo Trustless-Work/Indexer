@@ -38,8 +38,7 @@ a failure even if nothing was technically lost. The service must do ONE thing, p
 The envelope shape (`schema_version` currently `1.1`), routing keys and the
 `stellar.events` exchange are consumed by `trustlesswork-core-api`
 (`src/presentation/ingestion` + `src/application/ingestion`). A change here is a change
-there. `docs/event-schema.md` is the spec — its opening "Status" block is stale (it says
-the indexer does not publish yet; it has for months); the shape sections are current.
+there. `docs/event-schema.md` is the spec and is current.
 See `.claude/skills/envelope-contract-change`.
 
 ## Silent-loss modes (nothing in Postgres, nothing in the gap record)
@@ -59,8 +58,6 @@ See `.claude/skills/envelope-contract-change`.
   `OldestLedger`, but several providers serve far more history through `getLedgers`.
   So `replay` can refuse a range the endpoint would actually serve — with an error that
   suggests using an archive endpoint even when the rejected endpoint IS archive.
-- The `datastore` package (S3/GCS ledger lake) is wired but unused; the `aws-sdk-go-v2`
-  findings from govulncheck enter through it. Implementing it makes them real deps.
 - Mainnet needs `INDEXER_GET_LEDGERS_LIMIT=10` (with 100 catch-up asks ~265 MB per
   answer). RPC plan decided: Validation Cloud primary + free archive fallbacks.
   Testnet has no free public ledger lake; deep testnet history may cost more than mainnet.

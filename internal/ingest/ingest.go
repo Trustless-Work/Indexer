@@ -1,15 +1,12 @@
 // Package ingest is the composition root and live loop for the Indexer.
 //
-// State after the 2026-05-21 cleanup: the filter-and-forward pipeline
-// (detector / events / publisher / envelope-sink / state) was removed,
-// and the processor-based core in internal/indexer is once again the
-// single source of truth. This loop fetches ledgers from the configured
-// RPC backend, runs each one through the processor pipeline, and logs a
-// per-ledger summary of the populated buffer.
-//
-// Delivery to a sink is intentionally NOT wired yet. This is a clean
-// starting point to refine the processor core from: the buffer is built
-// every ledger and summarized; routing it to RabbitMQ is the next step.
+// The loop fetches ledgers from the configured RPC backend (with
+// failover), runs each one through the processor pipeline
+// (internal/indexer), publishes every detected fact to the configured
+// sink awaiting publisher confirms, and only then persists the cursor —
+// the cursor never advances past an unpublished fact. Between ledgers it
+// executes queued admin commands; it is the single writer of the
+// watchlist and the state files.
 //
 // The caller (cmd/ingest.go) owns ctx, signal handling and config
 // loading. Ingest itself never reads env vars.
@@ -233,6 +230,7 @@ func Ingest(ctx context.Context, cfg *config.Config) error {
 	// backend adoption. The tracker always exists (the loop reports to it
 	// unconditionally — no nil checks in the hot path).
 	tracker := health.NewTracker(cfg.Network.Name)
+	tracker.SetVersion(Version)
 	promRegistry := health.NewRegistry(tracker)
 	pool.Instrument(promRegistry)
 	onGap := func(gap state.Gap, clampedStart uint32) error {
