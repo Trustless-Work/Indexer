@@ -61,15 +61,16 @@ func TestAdmin_RoutesEnqueueTheRightCommands(t *testing.T) {
 	var got []Command
 	h := AdminHandler("tok", func(c Command) error { got = append(got, c); return nil }, &fakeRegistry{})
 
+	cid1, cid2 := testCID(t, 1), testCID(t, 2)
 	tests := []struct {
 		method, path, body string
 		want               Kind
 		contract           string
 	}{
-		{"POST", "/admin/escrows", `{"contract_id":"CABC"}`, KindTrackEscrow, "CABC"},
-		{"POST", "/admin/escrows/CABC/refresh", "", KindRefreshEscrow, "CABC"},
-		{"DELETE", "/admin/escrows/CABC", "", KindRemoveEscrow, "CABC"},
-		{"POST", "/admin/reseed", `{"contract_ids":["C1","C2"]}`, KindReseed, ""},
+		{"POST", "/admin/escrows", `{"contract_id":"` + cid1 + `"}`, KindTrackEscrow, cid1},
+		{"POST", "/admin/escrows/" + cid1 + "/refresh", "", KindRefreshEscrow, cid1},
+		{"DELETE", "/admin/escrows/" + cid1, "", KindRemoveEscrow, cid1},
+		{"POST", "/admin/reseed", `{"contract_ids":["` + cid1 + `","` + cid2 + `"]}`, KindReseed, ""},
 		{"POST", "/admin/pause", `{"ttl_seconds":120}`, KindPause, ""},
 		{"POST", "/admin/resume", "", KindResume, ""},
 		{"POST", "/admin/reconcile", "", KindReconcile, ""},

@@ -102,10 +102,33 @@ func emptyLedgerMeta(t *testing.T, seq uint32) xdr.LedgerCloseMeta {
 	return ledgerMeta(t, seq, nil, nil)
 }
 
+// txFlavor selects how the fixture transaction presents its result.
+type txFlavor int
+
+const (
+	txFlavorSuccess txFlavor = iota
+	// txFlavorFailed: result code txFAILED while the V3 meta STILL
+	// carries the event — the decoder would hand it over; only the
+	// explicit Successful() skip drops it.
+	txFlavorFailed
+	// txFlavorFeeBump: outer fee-bump envelope whose INNER transaction
+	// succeeded (outer code txFeeBumpInnerSuccess). A success check that
+	// reads the wrong layer drops this real fact.
+	txFlavorFeeBump
+)
+
 // eventLedgerMeta builds a V1 LedgerCloseMeta with one successful
 // InvokeHostFunction transaction whose Soroban meta carries one contract
 // event emitted by escrowID.
 func eventLedgerMeta(t *testing.T, seq uint32, escrowID string) xdr.LedgerCloseMeta {
+	topic := xdr.ScSymbol("initialized")
+	return eventLedgerMetaWith(t, seq, escrowID, txFlavorSuccess,
+		[]xdr.ScVal{{Type: xdr.ScValTypeScvSymbol, Sym: &topic}})
+}
+
+// eventLedgerMetaWith is the parametrized core shared by the fixture
+// variants (failed tx, fee-bump, hostile event payloads).
+func eventLedgerMetaWith(t *testing.T, seq uint32, escrowID string, flavor txFlavor, topics []xdr.ScVal) xdr.LedgerCloseMeta {
 	t.Helper()
 
 	raw, err := strkey.Decode(strkey.VersionByteContract, escrowID)
@@ -115,14 +138,13 @@ func eventLedgerMeta(t *testing.T, seq uint32, escrowID string) xdr.LedgerCloseM
 	var contractID xdr.ContractId
 	copy(contractID[:], raw)
 
-	topic := xdr.ScSymbol("initialized")
 	event := xdr.ContractEvent{
 		Type:       xdr.ContractEventTypeContract,
 		ContractId: &contractID,
 		Body: xdr.ContractEventBody{
 			V: 0,
 			V0: &xdr.ContractEventV0{
-				Topics: []xdr.ScVal{{Type: xdr.ScValTypeScvSymbol, Sym: &topic}},
+				Topics: topics,
 				Data:   xdr.ScVal{Type: xdr.ScValTypeScvVoid},
 			},
 		},
@@ -161,6 +183,25 @@ func eventLedgerMeta(t *testing.T, seq uint32, escrowID string) xdr.LedgerCloseM
 		},
 	}
 
+	if flavor == txFlavorFeeBump {
+		innerV1 := env.V1
+		var feeSource xdr.Uint256
+		feeSource[0] = 0x02
+		env = xdr.TransactionEnvelope{
+			Type: xdr.EnvelopeTypeEnvelopeTypeTxFeeBump,
+			FeeBump: &xdr.FeeBumpTransactionEnvelope{
+				Tx: xdr.FeeBumpTransaction{
+					FeeSource: xdr.MuxedAccount{Type: xdr.CryptoKeyTypeKeyTypeEd25519, Ed25519: &feeSource},
+					Fee:       200,
+					InnerTx: xdr.FeeBumpTransactionInnerTx{
+						Type: xdr.EnvelopeTypeEnvelopeTypeTx,
+						V1:   innerV1,
+					},
+				},
+			},
+		}
+	}
+
 	txHash, err := network.HashTransactionInEnvelope(env, testPassphrase)
 	if err != nil {
 		t.Fatalf("hashing fixture transaction: %v", err)
@@ -176,15 +217,49 @@ func eventLedgerMeta(t *testing.T, seq uint32, escrowID string) xdr.LedgerCloseM
 			},
 		},
 	}}
+	result := xdr.TransactionResultResult{
+		Code:    xdr.TransactionResultCodeTxSuccess,
+		Results: &opResults,
+	}
+	switch flavor {
+	case txFlavorFailed:
+		failedOpResults := []xdr.OperationResult{{
+			Code: xdr.OperationResultCodeOpInner,
+			Tr: &xdr.OperationResultTr{
+				Type:                     xdr.OperationTypeInvokeHostFunction,
+				InvokeHostFunctionResult: &xdr.InvokeHostFunctionResult{Code: xdr.InvokeHostFunctionResultCodeInvokeHostFunctionTrapped},
+			},
+		}}
+		result = xdr.TransactionResultResult{
+			Code:    xdr.TransactionResultCodeTxFailed,
+			Results: &failedOpResults,
+		}
+	case txFlavorFeeBump:
+		innerHash, herr := network.HashTransactionInEnvelope(
+			xdr.TransactionEnvelope{Type: xdr.EnvelopeTypeEnvelopeTypeTx, V1: env.FeeBump.Tx.InnerTx.V1}, testPassphrase)
+		if herr != nil {
+			t.Fatalf("hashing inner transaction: %v", herr)
+		}
+		result = xdr.TransactionResultResult{
+			Code: xdr.TransactionResultCodeTxFeeBumpInnerSuccess,
+			InnerResultPair: &xdr.InnerTransactionResultPair{
+				TransactionHash: innerHash,
+				Result: xdr.InnerTransactionResult{
+					Result: xdr.InnerTransactionResultResult{
+						Code:    xdr.TransactionResultCodeTxSuccess,
+						Results: &opResults,
+					},
+				},
+			},
+		}
+	}
+
 	processing := xdr.TransactionResultMeta{
 		Result: xdr.TransactionResultPair{
 			TransactionHash: txHash,
 			Result: xdr.TransactionResult{
 				FeeCharged: 100,
-				Result: xdr.TransactionResultResult{
-					Code:    xdr.TransactionResultCodeTxSuccess,
-					Results: &opResults,
-				},
+				Result:     result,
 			},
 		},
 		TxApplyProcessing: xdr.TransactionMeta{
@@ -527,5 +602,95 @@ func TestIngest_OrphanWatchlistRecovered(t *testing.T) {
 	}
 	if len(st.EscrowContracts) != 1 || st.EscrowContracts[0] != testEscrowID(t) {
 		t.Errorf("escrows = %v, want the recovered watchlist (tombstoned seed id must NOT re-enter)", st.EscrowContracts)
+	}
+}
+
+// TestIngest_FailedTransactionPublishesNothing pins the explicit
+// Successful() skip: a FAILED transaction whose V3 meta still carries an
+// escrow event (hostile or boundary data — core would not produce it,
+// but the decoder forwards whatever is there) must contribute zero
+// facts, and the run must complete normally.
+func TestIngest_FailedTransactionPublishesNothing(t *testing.T) {
+	const end, eventAt = uint32(5), uint32(3)
+
+	topic := xdr.ScSymbol("initialized")
+	metas := eventFixture(t, end, 0) // all empty...
+	metas[eventAt] = eventLedgerMetaWith(t, eventAt, testEscrowID(t), txFlavorFailed,
+		[]xdr.ScVal{{Type: xdr.ScValTypeScvSymbol, Sym: &topic}})
+
+	out := &loopSink{}
+	h := newLoopHarness(t, end, metas, out)
+
+	if err := Ingest(context.Background(), h.cfg); err != nil {
+		t.Fatalf("Ingest: %v", err)
+	}
+	if n := len(out.snapshot()); n != 0 {
+		t.Fatalf("a failed transaction produced %d published facts; want 0", n)
+	}
+
+	store, err := state.NewFileStore(h.statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	st, err := store.Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.LastLedgerSeq != end {
+		t.Errorf("cursor = %d, want %d (the run must complete)", st.LastLedgerSeq, end)
+	}
+}
+
+// TestIngest_FeeBumpInnerSuccessDetected is the trap the plan flags for
+// the Successful() check: a fee-bump wrapper whose INNER transaction
+// succeeded reports txFeeBumpInnerSuccess on the outer result. Reading
+// success from the wrong layer would silently drop this real fact.
+func TestIngest_FeeBumpInnerSuccessDetected(t *testing.T) {
+	const end, eventAt = uint32(5), uint32(3)
+
+	topic := xdr.ScSymbol("initialized")
+	metas := eventFixture(t, end, 0)
+	metas[eventAt] = eventLedgerMetaWith(t, eventAt, testEscrowID(t), txFlavorFeeBump,
+		[]xdr.ScVal{{Type: xdr.ScValTypeScvSymbol, Sym: &topic}})
+
+	out := &loopSink{}
+	h := newLoopHarness(t, end, metas, out)
+
+	if err := Ingest(context.Background(), h.cfg); err != nil {
+		t.Fatalf("Ingest: %v", err)
+	}
+	published := out.snapshot()
+	if len(published) != 1 || published[0].Type != "event" || published[0].ContractID != testEscrowID(t) {
+		t.Fatalf("fee-bump inner success not detected: published %+v", published)
+	}
+}
+
+// TestIngest_PanicBecomesFatalWithCursorUntouched pins the recover
+// frontier: hostile event XDR (a Symbol topic with a nil arm) panics
+// inside the detector; the frontier must convert it into the SAME fatal
+// error path as any processing failure — never a skipped ledger, never a
+// retry — with the cursor untouched.
+func TestIngest_PanicBecomesFatalWithCursorUntouched(t *testing.T) {
+	const end, eventAt = uint32(5), uint32(3)
+
+	metas := eventFixture(t, end, 0)
+	metas[eventAt] = eventLedgerMetaWith(t, eventAt, testEscrowID(t), txFlavorSuccess,
+		[]xdr.ScVal{{Type: xdr.ScValTypeScvSymbol, Sym: nil}}) // hostile: nil union arm
+
+	h := newLoopHarness(t, end, metas, &loopSink{})
+
+	err := Ingest(context.Background(), h.cfg)
+	if err == nil {
+		t.Fatal("Ingest succeeded despite a panic in ledger processing")
+	}
+	if !strings.Contains(err.Error(), "panic") {
+		t.Fatalf("error does not surface the panic: %v", err)
+	}
+	if !strings.Contains(err.Error(), "processing ledger 3") {
+		t.Errorf("error does not carry the ledger context: %v", err)
+	}
+	if h.stateFileExists() {
+		t.Fatal("cursor file exists after a processing panic: fail-stop was not clean")
 	}
 }

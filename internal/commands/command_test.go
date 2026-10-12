@@ -4,17 +4,32 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/stellar/go-stellar-sdk/strkey"
 )
+
+// testCID returns a syntactically valid contract address (C-strkey)
+// derived from b, for commands whose ids are strkey-validated.
+func testCID(t *testing.T, b byte) string {
+	t.Helper()
+	raw := make([]byte, 32)
+	raw[0] = b
+	id, err := strkey.Encode(strkey.VersionByteContract, raw)
+	if err != nil {
+		t.Fatalf("encoding test contract id: %v", err)
+	}
+	return id
+}
 
 func TestValidate_AcceptsEveryKindWithItsArguments(t *testing.T) {
 	tests := []struct {
 		name string
 		cmd  Command
 	}{
-		{"track", Command{Kind: KindTrackEscrow, ContractID: "CABC"}},
-		{"refresh", Command{Kind: KindRefreshEscrow, ContractID: "CABC"}},
-		{"reseed", Command{Kind: KindReseed, ContractIDs: []string{"CABC", "CDEF"}}},
-		{"remove", Command{Kind: KindRemoveEscrow, ContractID: "CABC"}},
+		{"track", Command{Kind: KindTrackEscrow, ContractID: testCID(t, 1)}},
+		{"refresh", Command{Kind: KindRefreshEscrow, ContractID: testCID(t, 1)}},
+		{"reseed", Command{Kind: KindReseed, ContractIDs: []string{testCID(t, 1), testCID(t, 2)}}},
+		{"remove", Command{Kind: KindRemoveEscrow, ContractID: "CABC-legacy-garbage"}},
 		{"pause", Command{Kind: KindPause, TTLSeconds: 600}},
 		{"resume", Command{Kind: KindResume}},
 		{"reconcile", Command{Kind: KindReconcile}},
@@ -69,5 +84,34 @@ func TestPauseTTL_DefaultsAndCaps(t *testing.T) {
 	}
 	if got := (Command{Kind: KindPause, TTLSeconds: 60}).PauseTTL(); got != time.Minute {
 		t.Errorf("60s ttl = %s, want 1m", got)
+	}
+}
+
+// Strkey validation: ids that will be QUERIED (track/refresh/reseed)
+// must be real contract addresses; remove stays lenient because it is
+// the cleanup path for garbage accepted before this validation existed.
+func TestValidate_RejectsMalformedContractIDs(t *testing.T) {
+	bad := "CABC" // truncated: not a decodable C-strkey
+	tests := []struct {
+		name string
+		cmd  Command
+	}{
+		{"track", Command{Kind: KindTrackEscrow, ContractID: bad}},
+		{"refresh", Command{Kind: KindRefreshEscrow, ContractID: bad}},
+		{"reseed", Command{Kind: KindReseed, ContractIDs: []string{testCID(t, 1), bad}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.cmd.Validate()
+			if !errors.Is(err, ErrInvalidCommand) {
+				t.Fatalf("Validate accepted a malformed contract id: %v", err)
+			}
+		})
+	}
+}
+
+func TestValidate_RemoveAcceptsLegacyGarbage(t *testing.T) {
+	if err := (Command{Kind: KindRemoveEscrow, ContractID: "not-a-strkey"}).Validate(); err != nil {
+		t.Fatalf("remove must stay lenient for legacy cleanup: %v", err)
 	}
 }

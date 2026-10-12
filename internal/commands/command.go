@@ -26,6 +26,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/Trustless-Work/Indexer/internal/utils"
 )
 
 // Kind names one command. Part of the contract with operators and with
@@ -99,7 +101,21 @@ type Command struct {
 // Validate enforces per-kind argument requirements.
 func (c Command) Validate() error {
 	switch c.Kind {
-	case KindTrackEscrow, KindRefreshEscrow, KindRemoveEscrow:
+	case KindTrackEscrow, KindRefreshEscrow:
+		// Strict strkey validation on ids that will be QUERIED: a typo
+		// here used to be accepted 202, registered, persisted, and then
+		// silently never asked about — tracked forever, found never.
+		if c.ContractID == "" {
+			return fmt.Errorf("%w: %s requires contract_id", ErrInvalidCommand, c.Kind)
+		}
+		if !utils.IsContractAddress(c.ContractID) {
+			return fmt.Errorf("%w: %s contract_id %q is not a valid contract address (C...)", ErrInvalidCommand, c.Kind, c.ContractID)
+		}
+	case KindRemoveEscrow:
+		// Deliberately lenient: remove is the CLEANUP path, and the only
+		// way to untrack a malformed id accepted before this validation
+		// existed. Tombstoning garbage is harmless; refusing to would
+		// make legacy garbage permanent.
 		if c.ContractID == "" {
 			return fmt.Errorf("%w: %s requires contract_id", ErrInvalidCommand, c.Kind)
 		}
@@ -109,6 +125,11 @@ func (c Command) Validate() error {
 		}
 		if len(c.ContractIDs) > MaxReseedBatch {
 			return fmt.Errorf("%w: reseed carries %d ids, max is %d — split the batch", ErrInvalidCommand, len(c.ContractIDs), MaxReseedBatch)
+		}
+		for _, id := range c.ContractIDs {
+			if !utils.IsContractAddress(id) {
+				return fmt.Errorf("%w: reseed contract id %q is not a valid contract address (C...)", ErrInvalidCommand, id)
+			}
 		}
 	case KindPause:
 		if c.TTLSeconds < 0 {

@@ -104,6 +104,11 @@ type EscrowStateDetector struct {
 	// detector lives on the single ingest goroutine (same invariant as
 	// the registry writes).
 	learned map[string]string
+	// warnedBadIDs remembers which tracked ids already produced a
+	// key-build warning, so a legacy invalid id in the watchlist logs
+	// once per process instead of once per sweep pass. Same
+	// single-goroutine ownership as learned.
+	warnedBadIDs map[string]struct{}
 	// suppressedRemovals counts removals withheld by the plausibility
 	// guard since boot. Surfaced through SuppressedRemovals so the loop
 	// can report it: a guard that fires silently would trade one
@@ -115,7 +120,7 @@ type EscrowStateDetector struct {
 // RPC client. The registry is used to filter response entries (defence in
 // depth) — only entries owned by known escrows are emitted.
 func NewEscrowStateDetector(rpc LedgerEntryGetter, reg *registry.Registry) *EscrowStateDetector {
-	return &EscrowStateDetector{rpc: rpc, registry: reg, learned: make(map[string]string)}
+	return &EscrowStateDetector{rpc: rpc, registry: reg, learned: make(map[string]string), warnedBadIDs: make(map[string]struct{})}
 }
 
 // KeyCost is how many getLedgerEntries keys a fetch for id will spend —
@@ -234,12 +239,24 @@ func (d *EscrowStateDetector) queryEntries(ctx context.Context, escrowIDs []stri
 		}
 		candidates, err := escrowStateLedgerKeys(id)
 		if err != nil {
+			// A tracked id whose key cannot even be BUILT will never be
+			// queried and never produce a fact — the operator believes it
+			// is tracked, so the drop must not be silent. Once per id per
+			// process: the condition is permanent until the id is removed.
+			if _, warned := d.warnedBadIDs[id]; !warned {
+				d.warnedBadIDs[id] = struct{}{}
+				log.Ctx(ctx).Warnf("Tracked id %q is not a valid contract address — it will never be queried; remove it via /admin/remove", id)
+			}
 			continue
 		}
 		requested = append(requested, id)
 		for _, key := range candidates {
 			b64, err := xdr.MarshalBase64(key)
 			if err != nil {
+				if _, warned := d.warnedBadIDs[id]; !warned {
+					d.warnedBadIDs[id] = struct{}{}
+					log.Ctx(ctx).Warnf("Ledger key for tracked escrow %q failed to marshal and was skipped: %v", id, err)
+				}
 				continue
 			}
 			keys = append(keys, b64)

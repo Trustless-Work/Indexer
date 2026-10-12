@@ -46,10 +46,22 @@ func NewIndexer(reg *registry.Registry) *Indexer {
 // before detection (pass 2), so escrows deployed in the same ledger they
 // first receive events are already known.
 func (i *Indexer) ProcessLedger(ctx context.Context, transactions []ingest.LedgerTransaction) ([]processors.EscrowEvent, []string, error) {
+	// Failed transactions are skipped EXPLICITLY in both passes: core
+	// only commits state changes and events for successful ones, but the
+	// SDK streams failed transactions too, and for meta V3 their
+	// SorobanMeta events come back from GetContractEventsForOperation
+	// as-is — so without this check the exclusion of failed-tx facts is
+	// inherited from decoder behavior, not owned here. Successful()
+	// resolves fee-bump wrappers to the INNER transaction's result; a
+	// check against the outer code would drop real facts.
+
 	// Pass 1: discovery (registers approved-hash escrows).
 	for _, tx := range transactions {
 		if err := ctx.Err(); err != nil {
 			return nil, nil, err
+		}
+		if !tx.Successful() {
+			continue
 		}
 		if _, err := i.discovery.DiscoverFromTransaction(tx); err != nil {
 			return nil, nil, fmt.Errorf("escrow discovery at ledger=%d tx=%d: %w", tx.Ledger.LedgerSequence(), tx.Index, err)
@@ -66,6 +78,9 @@ func (i *Indexer) ProcessLedger(ctx context.Context, transactions []ingest.Ledge
 	for _, tx := range transactions {
 		if err := ctx.Err(); err != nil {
 			return nil, nil, err
+		}
+		if !tx.Successful() {
+			continue
 		}
 		evs, err := i.eventDetector.DetectFromTransaction(tx)
 		if err != nil {
