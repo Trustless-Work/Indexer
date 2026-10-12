@@ -1,6 +1,6 @@
 # Audit-hardening plan
 
-Status: **in progress** · Created: 2026-10-12 · Source: full internal audit of this
+Status: **W1–W9 COMPLETE** (merged 2026-10-12, indexer PRs #37–#44 + core-api PR #72; Phase 2 remains a backlog) · Created: 2026-10-12 · Source: full internal audit of this
 repo + cross-comparison with the Sierpe indexer + a second-order risk simulation of
 every proposed fix. This document is the single source of truth for the hardening
 work: it records not only WHAT to implement but the exact design that survived the
@@ -46,7 +46,7 @@ already analyzed and rejected for a stated reason.
 | W6 | State Load: orphan-watchlist merge | ✅ | `fix/w6-orphan-watchlist` |
 | W7 | Chain-data robustness (recover, tx success, strkey) | ✅ | `security/w7-chain-data-robustness` |
 | W8 | Threat model document | ✅ | `docs/w8-threat-model` |
-| W9 | HMAC key rotation (cross-repo) | ✅ indexer side | `security/w9-hmac-rotation` (core-api mirror pending) |
+| W9 | HMAC key rotation (cross-repo) | ✅ | `security/w9-hmac-rotation` + core-api PR #72 |
 
 ---
 
@@ -380,7 +380,7 @@ incident.
 **Checklist:**
 - [x] Runbook written: `docs/hmac-key-rotation.md` — rotation order (core adds key → indexer rotates → redrive DLQ → core removes old), the DLQ failure mode it prevents, the fingerprint derivation, the consumer requirements spec, and the enforce-mode rollout
 - [x] kid header emitted (recomputed per publish so it can never drift from the signing key); fingerprint vector pinned in the indexer tests
-- [ ] core-api mirror PR: verify-set keyed by fingerprint, selection by kid, try-all fallback without kid, mirrored vector — requirements spec in the runbook's "Consumer requirements" section; implement from a session in that repo
+- [x] core-api mirror merged (trustlesswork-core-api PR #72): verify-set keyed by fingerprint (`ENVELOPE_HMAC_KEYS`, single-key `ENVELOPE_HMAC_KEY` kept working), selection by kid with unknown-kid-is-invalid, try-all fallback without kid, mirrored cross-repo vector, timing-safe comparison
 - [x] require-signing flag, default false (tested), boot-refusal with flag and no key (tested)
 - [x] event-schema.md updated (Key id bullet; classification: additive transport metadata, no schema bump — same class as x-tw-sig itself)
 
