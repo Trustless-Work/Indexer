@@ -82,6 +82,15 @@ const (
 // rotation cycles harmlessly until the chain (or a provider) moves again.
 var errTipStalled = errors.New("RPC tip stalled")
 
+// Construction seams for loop-level tests (ingest_loop_test.go): the
+// production values are the real constructors, overridden only by tests
+// in this package so Ingest can run against a scripted pool and sink
+// while the loop body stays byte-identical to production.
+var (
+	newPool = newRPCPool
+	newSink = sinkfactory.New
+)
+
 // Ingest is the entry point of the Indexer pipeline. It blocks until ctx
 // cancellation or a terminal error.
 //
@@ -196,7 +205,7 @@ func Ingest(ctx context.Context, cfg *config.Config) error {
 	// backpressure wrapper makes a full queue WAIT (retrying in place,
 	// cursor untouched) instead of killing the process; only envelope
 	// bugs, broken topology and a dead connection stay fatal.
-	rawSink, err := sinkfactory.New(cfg)
+	rawSink, err := newSink(cfg)
 	if err != nil {
 		return fmt.Errorf("building sink: %w", err)
 	}
@@ -218,7 +227,7 @@ func Ingest(ctx context.Context, cfg *config.Config) error {
 	// Gap and persisted BEFORE any ledger is processed — evidence for a
 	// later backfill. onGap is that persistence hook, shared by boot and
 	// every later rotation.
-	pool := newRPCPool(cfg)
+	pool := newPool(cfg)
 	defer func() {
 		if cerr := pool.Close(); cerr != nil {
 			log.Ctx(ctx).Warnf("closing RPC pool: %v", cerr)
