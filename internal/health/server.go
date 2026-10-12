@@ -15,6 +15,18 @@ import (
 // than a couple of seconds is a hung client, not a request worth saving.
 const shutdownGrace = 2 * time.Second
 
+// Server timeouts. Without them a client that opens a connection and
+// feeds bytes one at a time (or never reads the response) holds a
+// goroutine forever — slowloris — on the one port that also carries
+// /admin. Generous bounds: health answers are microseconds, and the
+// largest legitimate exchange is an /admin body capped at 1MB.
+const (
+	readHeaderTimeout = 5 * time.Second
+	readTimeout       = 10 * time.Second
+	writeTimeout      = 10 * time.Second
+	idleTimeout       = 60 * time.Second
+)
+
 // Handler returns the health HTTP routes for t, plus admin mounted
 // under /admin/ when non-nil (the control surface carries its own
 // auth) and metrics at /metrics when non-nil. Split from Serve so tests
@@ -68,7 +80,14 @@ func Handler(t *Tracker, admin, metrics http.Handler) http.Handler {
 // monitors see the service as unreachable and alert, which is the
 // correct outcome anyway.
 func Serve(ctx context.Context, addr string, t *Tracker, admin, metrics http.Handler) {
-	srv := &http.Server{Addr: addr, Handler: Handler(t, admin, metrics)}
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           Handler(t, admin, metrics),
+		ReadHeaderTimeout: readHeaderTimeout,
+		ReadTimeout:       readTimeout,
+		WriteTimeout:      writeTimeout,
+		IdleTimeout:       idleTimeout,
+	}
 
 	go func() {
 		<-ctx.Done()
