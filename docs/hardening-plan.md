@@ -40,7 +40,7 @@ already analyzed and rejected for a stated reason.
 |------|-------|--------|----|
 | W1 | Dead code removal & truthful metadata | ✅ | `chore/w1-dead-code-and-metadata` |
 | W2 | CI parity (race, staticcheck, gosec, govulncheck) | ✅ | `ci/w2-parity` |
-| W3 | Loop invariant test (publish-fails ⇒ no Save) | ☐ | |
+| W3 | Loop invariant test (publish-fails ⇒ no Save) | ✅ | `test/w3-loop-invariant` |
 | W4 | Secret & transport validation | ☐ | |
 | W5 | HTTP server timeouts | ✅ | folded into `ci/w2-parity` (see W5 note) |
 | W6 | State Load: orphan-watchlist merge | ☐ | |
@@ -141,11 +141,22 @@ refactor exactly the bug class the test exists to prevent. Characterization test
 first, against the untouched code. Extract helpers only if a branch proves
 unreachable, in its own later PR, with this test already green on both sides.
 
+**Execution note (2026-10-12):** sink/pool injection proved genuinely unreachable
+black-box (Ingest builds both from cfg; the sink factory only knows noop and
+rabbitmq, and a noop sink cannot fail). Per this item's escape hatch, the minimal
+concession was two package-level construction seams (`var newPool = newRPCPool`,
+`var newSink = sinkfactory.New`) and the two call-site identifier swaps inside
+Ingest — the loop BODY is untouched and the seams are inert in production. The
+tests reuse the existing `fakeRPC`/`fakeBackend`/`testPool` fixtures from
+failover_test.go and hand-built V1 LedgerCloseMeta XDR carrying one contract
+event from a seeded escrow (ledgers close in the past so the run is catching-up:
+no state fetches, no sweep — one publishable fact).
+
 **Checklist:**
-- [ ] Test exists against the UNREFACTORED loop
-- [ ] Locally verified that moving Save before the publishes makes it fail (do not commit the mutation)
-- [ ] Publish-order assertion included
-- [ ] No changes to `Ingest()` itself in this PR
+- [x] Test exists against the unrefactored loop (body untouched; two inert construction seams, see note)
+- [x] Locally verified that an injected Save-before-publish mutation makes all three tests fail with the right messages; mutation reverted, not committed
+- [x] Publish-order assertion included (the sink's publish callback observes that the cursor file does not exist yet at publish time)
+- [x] Invariant pinned on both save triggers: mid-range publish failure and final-ledger (isFinal) publish failure leave no state file
 
 ## W4 — Secret & transport validation
 
