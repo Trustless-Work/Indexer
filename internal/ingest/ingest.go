@@ -19,6 +19,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"runtime/debug"
 	"strconv"
 	"time"
 
@@ -587,13 +588,29 @@ func processLedger(
 	networkPassphrase string,
 	limitHint int,
 	meta xdr.LedgerCloseMeta,
-) ([]processors.EscrowEvent, []string, error) {
+) (facts []processors.EscrowEvent, activeEscrows []string, err error) {
+	// Recover frontier for chain data: SDK XDR getters panic on
+	// malformed or unexpected meta (nil unions, short slices). A panic
+	// here becomes the SAME fatal error path as any processing failure —
+	// never a skipped ledger (that is a silent gap, the one unforgivable
+	// outcome) and never a transient retry (an invisible poison-ledger
+	// loop). The process exits and the cursor stays put, so nothing is
+	// lost; the stack trace is logged because the panic site, not the
+	// frontier, is what the operator needs to report upstream.
+	defer func() {
+		if r := recover(); r != nil {
+			log.Ctx(ctx).Errorf("Panic while processing a ledger (exiting, cursor untouched): %v\n%s", r, debug.Stack())
+			facts, activeEscrows = nil, nil
+			err = fmt.Errorf("panic while processing: %v", r)
+		}
+	}()
+
 	transactions, err := readLedgerTransactions(ctx, networkPassphrase, limitHint, meta)
 	if err != nil {
 		return nil, nil, fmt.Errorf("reading transactions: %w", err)
 	}
 
-	facts, activeEscrows, err := ledgerIndexer.ProcessLedger(ctx, transactions)
+	facts, activeEscrows, err = ledgerIndexer.ProcessLedger(ctx, transactions)
 	if err != nil {
 		return nil, nil, err
 	}

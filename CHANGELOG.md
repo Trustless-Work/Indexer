@@ -37,6 +37,19 @@ see `docs/event-schema.md`.
   (transitive via the Stellar SDK). The `x/net` fix requires Go 1.26:
   module, Dockerfile build image and README updated accordingly.
 
+### Security
+- Chain-data robustness: failed transactions are now skipped EXPLICITLY
+  (fee-bump aware — the inner transaction's result decides) instead of
+  relying on decoder behavior to exclude their facts; a panic while
+  processing a ledger (hostile or malformed XDR) is recovered into the
+  same fatal error path with the ledger context and a stack trace —
+  never a skipped ledger, never a retry — with the cursor untouched;
+  admin track/refresh/reseed now reject ids that are not valid contract
+  addresses (400) — previously a typo was accepted, persisted and then
+  silently never queried, forever. Remove stays lenient on purpose: it
+  is the cleanup path for ids accepted before this validation. A tracked
+  id that cannot build a ledger key now logs a warning (once per id).
+
 ### Added
 - CI now runs the race detector, staticcheck, gosec and govulncheck on
   every push and PR. Scanners are deliberately unpinned so a new rule or

@@ -44,7 +44,7 @@ already analyzed and rejected for a stated reason.
 | W4 | Secret & transport validation | ✅ | `security/w4-secret-validation` |
 | W5 | HTTP server timeouts | ✅ | folded into `ci/w2-parity` (see W5 note) |
 | W6 | State Load: orphan-watchlist merge | ✅ | `fix/w6-orphan-watchlist` |
-| W7 | Chain-data robustness (recover, tx success, strkey) | ☐ | |
+| W7 | Chain-data robustness (recover, tx success, strkey) | ✅ | `security/w7-chain-data-robustness` |
 | W8 | Threat model document | ☐ | |
 | W9 | HMAC key rotation (cross-repo) | ☐ | |
 
@@ -307,13 +307,22 @@ the silent key-build drop in
 `internal/indexer/processors/escrow_state.go:235` (today an invalid tracked id
 is skipped silently forever).
 
+**Execution notes (2026-10-12):** the recover frontier lives in `processLedger`
+(already a separate function — the loop body stays untouched) and logs the stack
+trace before returning through the existing fatal path. The panic fixture is
+hostile event XDR (a Symbol topic with a nil union arm), which panics inside the
+detector — a real chain-data shape, not a synthetic `panic()` call. One scope
+decision beyond the letter of the plan: `remove` stays strkey-LENIENT, because it
+is the only cleanup path for malformed ids accepted before this validation
+existed — strictness there would make legacy garbage permanent.
+
 **Checklist:**
-- [ ] W3 merged first
-- [ ] Panic-injection test reaches the fatal path with ledger/tx context in the error
-- [ ] No recover-and-continue anywhere (review assertion)
-- [ ] Success check uses the fee-bump-aware helper; fee-bump fixture green; no diff in published facts on existing fixtures
-- [ ] Admin rejects malformed ids with 400; valid C-address accepted; boot with legacy seed ids unaffected
-- [ ] queryEntries drop now logs
+- [x] W3 merged first
+- [x] Panic-injection test reaches the fatal path with ledger context in the error, stack trace logged, cursor untouched (hostile-XDR fixture, not a synthetic panic)
+- [x] No recover-and-continue anywhere (the frontier converts to the existing fatal error path only)
+- [x] Success check uses `LedgerTransaction.Successful()` (verified in SDK source: TxSuccess OR TxFeeBumpInnerSuccess); fee-bump fixture green; failed-tx-with-events fixture publishes zero facts; existing fixtures unchanged
+- [x] Admin track/refresh/reseed reject malformed ids with 400; valid C-address accepted; `remove` lenient for legacy cleanup (tested both ways); seed-file boot path unaffected (validation is admin-edge only)
+- [x] queryEntries drop now logs, once per id per process (no sweep-pass spam)
 
 ## W8 — Threat model document
 
