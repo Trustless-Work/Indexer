@@ -56,6 +56,14 @@ const returnsBuffer = 8
 // redriveable.
 const signatureHeader = "x-tw-sig"
 
+// signatureKidHeader names the key that produced x-tw-sig, as a SHA-256
+// fingerprint (see keyFingerprint). It exists for rotation: the consumer
+// holds a verify-set keyed by fingerprint and picks the right key per
+// message, so old-key messages (DLQ redrives included) still verify
+// during the window where both keys are alive. Additive transport
+// metadata: verifiers that ignore it are unaffected.
+const signatureKidHeader = "x-tw-sig-kid"
+
 // signBody returns the lowercase hex HMAC-SHA256 of body under key. It
 // must be fed the EXACT bytes handed to the broker — the consumer
 // verifies over the raw delivery body, so signing a re-marshal (even a
@@ -64,6 +72,18 @@ func signBody(body, key []byte) string {
 	mac := hmac.New(sha256.New, key)
 	mac.Write(body)
 	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// keyFingerprint identifies a signing key on the wire without revealing
+// anything about it: the first 8 bytes of SHA-256(key), lowercase hex.
+// Preimage resistance makes the fingerprint safe to expose, and 16 hex
+// characters is plenty to disambiguate the two keys alive during a
+// rotation window. The derivation is part of the consumer contract
+// (docs/hmac-key-rotation.md): both sides compute it from the same raw
+// key string.
+func keyFingerprint(key string) string {
+	sum := sha256.Sum256([]byte(key))
+	return hex.EncodeToString(sum[:8])
 }
 
 // confirmation is one publish's own receipt, replacing the positional
@@ -236,7 +256,14 @@ func (s *Sink) Publish(ctx context.Context, env events.Envelope) error {
 		Body:         body,
 	}
 	if s.cfg.SignatureKey != "" {
-		msg.Headers = amqp.Table{signatureHeader: signBody(body, []byte(s.cfg.SignatureKey))}
+		// The fingerprint is recomputed per publish on purpose: it can
+		// never drift from the key that actually produced the signature
+		// one line above, whatever path constructed the Sink. One SHA-256
+		// per message is noise next to the HMAC already paid.
+		msg.Headers = amqp.Table{
+			signatureHeader:    signBody(body, []byte(s.cfg.SignatureKey)),
+			signatureKidHeader: keyFingerprint(s.cfg.SignatureKey),
+		}
 	}
 
 	s.mu.Lock()

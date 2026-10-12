@@ -51,6 +51,15 @@ see `docs/event-schema.md`.
   id that cannot build a ledger key now logs a warning (once per id).
 
 ### Added
+- HMAC key rotation support: signed messages now also carry
+  `x-tw-sig-kid` (first 8 bytes of SHA-256 of the key, lowercase hex),
+  so the core API can hold a verify-set of several keys during a
+  rotation and select the right one per message. Additive transport
+  metadata — a verifier that ignores it keeps working; `schema_version`
+  unchanged. Procedure and consumer requirements in
+  `docs/hmac-key-rotation.md`. New `SINK_REQUIRE_SIGNING` flag (default
+  false): when set, boot refuses to start without a key — the guard for
+  after the consumer switches to enforce mode.
 - CI now runs the race detector, staticcheck, gosec and govulncheck on
   every push and PR. Scanners are deliberately unpinned so a new rule or
   newly disclosed vulnerability fails the build; gosec excludes are

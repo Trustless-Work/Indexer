@@ -135,6 +135,9 @@ func (c *Config) Validate() error {
 	if key := c.EnvelopeHMACKey; key != "" && len(key) < 32 {
 		errs = append(errs, fmt.Errorf("ENVELOPE_HMAC_KEY must be at least 32 bytes when set (got %d); the core API reads the SAME env var, so rotate both services together", len(key)))
 	}
+	if c.Sink.RequireSigning && c.EnvelopeHMACKey == "" {
+		errs = append(errs, fmt.Errorf("SINK_REQUIRE_SIGNING=true but ENVELOPE_HMAC_KEY is empty — set the key, or unset the flag while the consumer still tolerates unsigned messages"))
+	}
 
 	// --- Health ---
 	if c.Health.Enabled && (c.Health.Port < 1 || c.Health.Port > 65535) {

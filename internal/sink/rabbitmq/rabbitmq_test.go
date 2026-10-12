@@ -334,3 +334,55 @@ func TestPublish_TransportFailureIsUnavailable(t *testing.T) {
 		t.Fatalf("err = %v, want ErrSinkUnavailable", err)
 	}
 }
+
+// Key-fingerprint vector shared with the core API: both repos must
+// derive the same kid from the same raw key string (first 8 bytes of
+// SHA-256, lowercase hex). Mirror this constant in the consumer's
+// verify-set tests.
+func TestKeyFingerprint_CrossRepoVector(t *testing.T) {
+	const key = "0123456789abcdef0123456789abcdef"
+	const want = "3eb1bd439947eb76"
+	if got := keyFingerprint(key); got != want {
+		t.Errorf("keyFingerprint(%s) = %s, want %s", key, got, want)
+	}
+}
+
+// Signed publishes carry the kid alongside the signature, and the kid
+// always matches the key that produced that signature.
+func TestPublish_SignedMessageCarriesKeyID(t *testing.T) {
+	c := newConfirmation()
+	c.resolve(true)
+	ch := &fakeChannel{answers: []*fakeConfirmation{c}}
+	s := newSink(ch, nil)
+	s.cfg.SignatureKey = "kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk"
+
+	if err := s.Publish(context.Background(), envelope("one")); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	kid, ok := ch.headers[0][signatureKidHeader].(string)
+	if !ok {
+		t.Fatalf("headers = %v, want a string %s", ch.headers[0], signatureKidHeader)
+	}
+	if want := keyFingerprint(s.cfg.SignatureKey); kid != want {
+		t.Errorf("kid = %s, want %s (fingerprint of the signing key)", kid, want)
+	}
+	if len(kid) != 16 || strings.ToLower(kid) != kid {
+		t.Errorf("kid %q is not 16-char lowercase hex", kid)
+	}
+}
+
+// No key means NO kid either — same missing-vs-invalid logic as the
+// signature header itself.
+func TestPublish_WithoutKeyPublishesNoKidHeader(t *testing.T) {
+	c := newConfirmation()
+	c.resolve(true)
+	ch := &fakeChannel{answers: []*fakeConfirmation{c}}
+	s := newSink(ch, nil)
+
+	if err := s.Publish(context.Background(), envelope("one")); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	if _, present := ch.headers[0][signatureKidHeader]; present {
+		t.Errorf("headers = %v, want no %s header without a key", ch.headers[0], signatureKidHeader)
+	}
+}

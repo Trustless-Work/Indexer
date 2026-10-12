@@ -75,3 +75,34 @@ func TestLoad_SecretValidationErrors_NeverEchoTheValue(t *testing.T) {
 		t.Errorf("validation error echoes a secret value: %s", msg)
 	}
 }
+
+// SINK_REQUIRE_SIGNING is the post-enforce guard: with it set, a deploy
+// that lost the key must refuse to boot instead of publishing unsigned
+// into consumer rejection. Default false (rollout safety).
+func TestLoad_RequireSigning_WithoutKey_Fails(t *testing.T) {
+	withEnv(t, minimalEnv())
+	t.Setenv("SINK_REQUIRE_SIGNING", "true")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "SINK_REQUIRE_SIGNING") {
+		t.Fatalf("expected SINK_REQUIRE_SIGNING validation error; got %v", err)
+	}
+}
+
+func TestLoad_RequireSigning_WithKey_Succeeds(t *testing.T) {
+	withEnv(t, minimalEnv())
+	t.Setenv("SINK_REQUIRE_SIGNING", "true")
+	t.Setenv("ENVELOPE_HMAC_KEY", "0123456789abcdef0123456789abcdef")
+	if _, err := Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+}
+
+func TestLoad_RequireSigning_DefaultsToFalse(t *testing.T) {
+	withEnv(t, minimalEnv())
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Sink.RequireSigning {
+		t.Error("SINK_REQUIRE_SIGNING must default to false until the consumer enforces")
+	}
+}
