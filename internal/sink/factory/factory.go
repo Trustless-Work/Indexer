@@ -5,6 +5,7 @@ package factory
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/stellar/go-stellar-sdk/support/log"
 
@@ -29,6 +30,13 @@ func New(cfg *config.Config) (sink.Sink, error) {
 			// But once the core enforces, an unsigned indexer is a dead
 			// pipeline — make the state impossible to miss in the logs.
 			log.Warn("ENVELOPE_HMAC_KEY is not set — publishing UNSIGNED envelopes; the core API will reject them once it enforces signatures")
+		}
+		// A warning, never an error: Railway-style private networking
+		// legitimately runs plaintext AMQP, and a hard requirement is how
+		// self-signed certificates plus InsecureSkipVerify end up in
+		// production. Anywhere else this line in the logs is the finding.
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(cfg.RabbitMQ.URL)), "amqp://") {
+			log.Warn("RABBITMQ_URL uses plaintext amqp:// — credentials and envelopes travel unencrypted; acceptable only on a private network, use amqps:// anywhere else")
 		}
 		s, err := rabbitmq.New(rabbitmq.Config{
 			URL:               cfg.RabbitMQ.URL,

@@ -11,6 +11,23 @@ see `docs/event-schema.md`.
 ## [Unreleased]
 
 ### Security
+- Secret validation at boot: `ADMIN_TOKEN`, when set, must be at least
+  16 characters and `ENVELOPE_HMAC_KEY`, when set, at least 32 bytes —
+  a weak bearer token on the admin surface is brute-forceable and no
+  validation caught it. Empty stays valid for both (admin surface
+  disabled / unsigned publishing). **Migration:** deployments with
+  shorter values must rotate them BEFORE deploying this version, or boot
+  refuses; the HMAC key is shared with the core API, so rotate both
+  services together.
+- The boot config dump now prints the heartbeat URL as scheme://host
+  only: providers put the secret in the URL path, and whoever reads it
+  in logs can silence the dead-man's switch. The host stays visible so
+  a mistyped provider is still diagnosable.
+- Boot warning when `RABBITMQ_URL` uses plaintext `amqp://` (credentials
+  and envelopes travel unencrypted). A warning, not an error: private
+  networking legitimately runs plaintext, and a hard requirement is how
+  self-signed certificates plus disabled TLS verification end up in
+  production.
 - HTTP timeouts on the health/admin server (read-header 5s, read 10s,
   write 10s, idle 60s). Without them one slow client could hold a
   goroutine forever (slowloris) on the port that also carries `/admin`.

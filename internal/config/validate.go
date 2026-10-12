@@ -122,6 +122,20 @@ func (c *Config) Validate() error {
 		errs = append(errs, fmt.Errorf("STATE_PATH must not be empty"))
 	}
 
+	// --- Secrets ---
+	// Both checks are length-only and both treat EMPTY as valid, because
+	// empty is semantics, not absence: no admin token means the surface is
+	// unmounted entirely, and no HMAC key means unsigned publishing (the
+	// consumer's rollout mode). What must never pass is a WEAK value — a
+	// short bearer token is brute-forceable and the health port is one
+	// misconfiguration away from exposure.
+	if tok := c.AdminToken; tok != "" && len(tok) < 16 {
+		errs = append(errs, fmt.Errorf("ADMIN_TOKEN must be at least 16 characters when set (got %d); leave it empty to disable the admin surface", len(tok)))
+	}
+	if key := c.EnvelopeHMACKey; key != "" && len(key) < 32 {
+		errs = append(errs, fmt.Errorf("ENVELOPE_HMAC_KEY must be at least 32 bytes when set (got %d); the core API reads the SAME env var, so rotate both services together", len(key)))
+	}
+
 	// --- Health ---
 	if c.Health.Enabled && (c.Health.Port < 1 || c.Health.Port > 65535) {
 		errs = append(errs, fmt.Errorf("HEALTH_PORT must be in [1, 65535] when HEALTH_ENABLED=true; got %d", c.Health.Port))

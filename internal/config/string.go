@@ -56,20 +56,30 @@ func dumpStruct(sb *strings.Builder, prefix string, v reflect.Value) {
 //
 // Redaction precedence:
 //  1. Field tag `secret:"true"` wins absolutely.
-//  2. Field name containing "url" triggers URL-aware redaction; the
+//  2. Field tag `secret:"path"` prints scheme://host only — for URLs
+//     whose PATH is the secret (heartbeat ping URLs): the host stays
+//     visible so a mistyped provider is diagnosable from logs, while
+//     the part that can silence the alarm never prints.
+//  3. Field name containing "url" triggers URL-aware redaction; the
 //     password component of any embedded userinfo is replaced. Applies
 //     per element when the field is a []string (RPC_FALLBACK_URLS) —
 //     without this, the slice would fall through to the %v default and
 //     print embedded credentials verbatim.
-//  3. Otherwise, the value is printed with %v.
+//  4. Otherwise, the value is printed with %v.
 func renderValue(field reflect.StructField, value reflect.Value) string {
 	s := fmt.Sprintf("%v", value.Interface())
 
-	if field.Tag.Get("secret") == "true" {
+	switch field.Tag.Get("secret") {
+	case "true":
 		if s == "" {
 			return `""`
 		}
 		return "***"
+	case "path":
+		if s == "" {
+			return `""`
+		}
+		return redactURLPath(s)
 	}
 
 	if strings.Contains(strings.ToLower(field.Name), "url") {
@@ -92,6 +102,23 @@ func renderValue(field reflect.StructField, value reflect.Value) string {
 	}
 
 	return s
+}
+
+// redactURLPath renders a URL as scheme://host/*** — everything after
+// the host is hidden because, for heartbeat providers, the path IS the
+// credential. A value that does not parse as an absolute URL prints as
+// "***": showing a malformed value whole could leak the secret anyway
+// (e.g. a URL pasted without its scheme).
+func redactURLPath(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return "***"
+	}
+	marker := ""
+	if u.Path != "" || u.RawQuery != "" {
+		marker = "/***"
+	}
+	return u.Scheme + "://" + u.Host + marker
 }
 
 // redactURLPassword returns the input URL with any password in its
