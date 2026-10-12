@@ -34,6 +34,11 @@ Interpretation:
   hashes before concluding "no activity".
 - `rm` the state file while the process runs: the loop rewrites it every ledger. Stop
   and remove atomically: `railway ssh -- "rm -f /var/lib/indexer/<state> && kill -TERM 1"`.
+  To reset the cursor AND the watchlist, remove the `.watchlist.json` file too —
+  deleting only the cursor file is NOT a full reset: the next boot recovers the
+  surviving watchlist (escrows, tombstones, gaps) with a warning and starts fresh
+  from the configured start ledger. That recovery is deliberate (evidence must not
+  die by accident); a corrupt watchlist file refuses boot instead.
 - Local: `make reset-state` wipes the docker state volume; `make run` and `make up`
   both bind :8080.
 

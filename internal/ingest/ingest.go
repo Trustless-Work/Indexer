@@ -137,9 +137,28 @@ func Ingest(ctx context.Context, cfg *config.Config) error {
 	var persistedLastSeq uint32
 	persistedHash := ""
 	resumed := false
+	recovered := false
 	switch loaded, lerr := store.Load(ctx); {
 	case errors.Is(lerr, state.ErrStateNotFound):
-		log.Ctx(ctx).Info("No state file — starting fresh")
+		// A fresh start — but a surviving watchlist file rides along in
+		// loaded (orphan recovery): keep its escrows, tombstones and gap
+		// evidence instead of overwriting them on the first Save. The
+		// cursor is genuinely gone, so start-ledger resolution proceeds
+		// as a fresh boot; re-tracking stale escrows is safe (the sweep
+		// republishes, the consumer dedupes), losing them is not.
+		if len(loaded.EscrowContracts)+len(loaded.RemovedEscrows)+len(loaded.Gaps) > 0 {
+			if loaded.Network != "" && loaded.Network != cfg.Network.Passphrase {
+				return fmt.Errorf("orphan watchlist network mismatch: watchlist=%q, configured=%q", loaded.Network, cfg.Network.Passphrase)
+			}
+			persistedEscrows = loaded.EscrowContracts
+			persistedRemoved = loaded.RemovedEscrows
+			gaps = loaded.Gaps
+			recovered = true
+			log.Ctx(ctx).Warnf("Cursor file missing but a watchlist survives — preserving %d escrows, %d tombstones, %d gaps; starting fresh from the configured start ledger",
+				len(persistedEscrows), len(persistedRemoved), len(gaps))
+		} else {
+			log.Ctx(ctx).Info("No state file — starting fresh")
+		}
 	case lerr != nil:
 		return fmt.Errorf("loading state: %w", lerr)
 	default:
@@ -170,7 +189,7 @@ func Ingest(ctx context.Context, cfg *config.Config) error {
 	// range). Discovery keeps adding new escrows from here on. Tombstones
 	// restore FIRST so a stale entry in the persisted escrow list cannot
 	// outlive its own removal.
-	if resumed {
+	if resumed || recovered {
 		reg.SeedRemoved(persistedRemoved)
 		reg.Seed(persistedEscrows)
 		log.Ctx(ctx).Infof("Restored %d escrows from state (%d tombstoned)", reg.Size(), len(persistedRemoved))

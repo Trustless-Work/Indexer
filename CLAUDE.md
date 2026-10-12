@@ -49,6 +49,9 @@ See `.claude/skills/envelope-contract-change`.
   zero envelopes, zero logs.
 - Deleting the state file while the process runs: the loop rewrites it every ledger.
   Remove it and stop pid 1 atomically (`rm -f ... && kill -TERM 1`), never rm-then-redeploy.
+  Deleting ONLY the cursor file is recovered, not lossy: boot preserves the surviving
+  watchlist (escrows, tombstones, gaps) with a warning; a full reset removes the
+  `.watchlist.json` file too.
 - Messages parked in the core's DLQ are the core's problem to redrive, but the indexer
   side of the story is `indexer replay --from N --to M`.
 
