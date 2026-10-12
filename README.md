@@ -187,4 +187,7 @@ variables and the failover endpoint list, lives in
   contract consumed by the core API (versioned independently).
 - [docs/pluggable-sink-architecture.md](docs/pluggable-sink-architecture.md)
   — why delivery is an interface and how to add a sink.
+- [docs/threat-model.md](docs/threat-model.md) — trust assumptions,
+  actors and defenses, deliberate non-implementations, and the declared
+  operational ceilings (with numbers).
 - [CHANGELOG.md](CHANGELOG.md) — notable changes per release.

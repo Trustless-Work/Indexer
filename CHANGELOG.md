@@ -61,6 +61,10 @@ see `docs/event-schema.md`.
   field; both ends are now wired (unstamped builds report `"dev"`).
 - Hardening work plan at `docs/hardening-plan.md`: ordered work items with
   per-item designs, rejected alternatives and progress checkboxes.
+- Threat model at `docs/threat-model.md`: trust assumptions, actors and
+  the defenses that exist in code, deliberate non-implementations (and
+  why), and the declared operational ceilings with numbers. Every claim
+  code-verified; the review rule forbids aspirational statements.
 
 ### Removed
 - `STRICT_MODE` env var: it was parsed, printed at boot and read by
