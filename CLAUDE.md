@@ -41,6 +41,9 @@ The envelope shape (`schema_version` currently `1.1`), routing keys and the
 there. `docs/event-schema.md` is the spec and is current.
 See `.claude/skills/envelope-contract-change`.
 
+`docs/threat-model.md` is the audit-facing statement of trust assumptions, defenses
+and declared ceilings — keep it in the same PR as any change to a mechanism it cites.
+
 ## Silent-loss modes (nothing in Postgres, nothing in the gap record)
 
 - `INDEXER_START_LEDGER=0` on a **first boot** (or after losing the state volume) means

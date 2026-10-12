@@ -45,7 +45,7 @@ already analyzed and rejected for a stated reason.
 | W5 | HTTP server timeouts | ✅ | folded into `ci/w2-parity` (see W5 note) |
 | W6 | State Load: orphan-watchlist merge | ✅ | `fix/w6-orphan-watchlist` |
 | W7 | Chain-data robustness (recover, tx success, strkey) | ✅ | `security/w7-chain-data-robustness` |
-| W8 | Threat model document | ☐ | |
+| W8 | Threat model document | ✅ | `docs/w8-threat-model` |
 | W9 | HMAC key rotation (cross-repo) | ☐ | |
 
 ---
@@ -226,7 +226,7 @@ does not threaten it.
 **Checklist:**
 - [x] Four timeouts set on the server (ReadHeader 5s, Read 10s, Write 10s, Idle 60s — largest legitimate exchange is the 1MB-capped admin body)
 - [x] Health/readiness probes verified unaffected (full test suite green after the change)
-- [ ] Rate-limiter decision referenced in W8 (pending W8 itself)
+- [x] Rate-limiter decision referenced in W8 (threat-model.md, actor 1)
 
 ## W6 — State Load: orphan-watchlist merge
 
@@ -349,9 +349,10 @@ discovers is a finding.
   defect found in the sibling project).
 
 **Checklist:**
-- [ ] Document written, every claim code-verified
-- [ ] W5 rate-limiter decision recorded
-- [ ] Linked from README (operator docs) and CLAUDE.md
+- [x] Document written, every claim code-verified (mechanisms cited by package; ceilings with numbers: sweep N/200 ledgers per pass, publish 1/RTT, single-writer flock, mainnet ledger weight)
+- [x] W5 rate-limiter decision recorded (deliberate non-implementation with the lockout/spoofing/goroutine-exhaustion rationale)
+- [x] Linked from README (Further reading) and CLAUDE.md (with the keep-in-same-PR rule)
+- [x] Review rule written into the document itself: no aspirational statements; doc changes ride the PR that changes a cited mechanism
 
 ## W9 — HMAC key rotation (CROSS-REPO)
 
