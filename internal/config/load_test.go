@@ -49,9 +49,6 @@ func TestLoad_MinimalEnv_SucceedsWithDefaults(t *testing.T) {
 	if cfg.Health.Port != 8080 {
 		t.Errorf("expected Health.Port=8080; got %d", cfg.Health.Port)
 	}
-	if !cfg.StrictMode {
-		t.Error("expected StrictMode=true by default")
-	}
 }
 
 func TestLoad_FailsWithoutRPCURL(t *testing.T) {

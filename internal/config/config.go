@@ -35,11 +35,6 @@ type Config struct {
 	Health   HealthConfig   `envPrefix:"HEALTH_"`
 	Logging  LoggingConfig  `envPrefix:"LOG_"`
 
-	// StrictMode controls whether errs.IsSkippable errors halt the
-	// pipeline (true) or are logged and skipped (false). Default true
-	// in production: prefer halt-and-alert over silent data loss.
-	StrictMode bool `env:"STRICT_MODE" envDefault:"true"`
-
 	// AdminToken guards the /admin/* control surface on the health
 	// server (track/remove/refresh escrows, pause/resume, reconcile).
 	// Empty (the default) disables the surface entirely. The health port
@@ -117,8 +112,9 @@ type IndexerConfig struct {
 	// EndLedger > 0.
 	EndLedger uint32 `env:"END_LEDGER"`
 
-	// LedgerBackendType selects between live RPC ("rpc") and archived
-	// ledger storage ("datastore"). Only "rpc" is implemented today.
+	// LedgerBackendType selects the ledger source. "rpc" is the only
+	// supported value; the field exists so a future source lands as a
+	// config change for operators, not a new variable.
 	LedgerBackendType string `env:"LEDGER_BACKEND_TYPE" envDefault:"rpc"`
 
 	// GetLedgersLimit bounds how many ledgers a single backend

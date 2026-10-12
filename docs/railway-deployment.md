@@ -189,8 +189,9 @@ con el dashboard y **el archivo gana**.
 
 Notas:
 - **Sin `healthcheckPath`** a propósito (no hay endpoint todavía — ver sección 4).
-- `restartPolicyType: ALWAYS` → si el proceso muere (p.ej. el RPC se cae y entra a STRICT_MODE),
-  Railway lo levanta. Combiná con la lógica de catch-up del propio indexer.
+- `restartPolicyType: ALWAYS` → si el proceso muere (p.ej. un error fatal de integridad
+  o todos los RPC caídos), Railway lo levanta. Combiná con la lógica de catch-up del
+  propio indexer.
 - Si más adelante implementás health: agregá `"healthcheckPath": "/readyz"` y subí
   `healthcheckTimeout` si el primer readiness tarda.
 
@@ -223,10 +224,9 @@ RABBITMQ_PUBLISHER_CONFIRMS=true
 STATE_PATH=/var/lib/indexer/state.json
 RAILWAY_RUN_UID=0
 
-# --- Logging / errores ---
+# --- Logging ---
 LOG_FORMAT=json
 LOG_LEVEL=info
-STRICT_MODE=true
 
 # --- Arranque ---
 # 1ra vez: definí desde qué ledger arrancar (0 = tip actual). Tras el 1er boot,

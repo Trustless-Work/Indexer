@@ -8,6 +8,8 @@
 indexer.state.json
 indexer.state.json.lock
 indexer.state.json.tmp
+indexer.state.watchlist.json
+indexer.state.watchlist.json.tmp
 # Operator-supplied watchlist seed; environment-specific.
 indexer.watchlist.seed.json
 

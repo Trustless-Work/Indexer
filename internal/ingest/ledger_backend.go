@@ -14,23 +14,17 @@ type LedgerBackendType string
 
 const (
 	// LedgerBackendTypeRPC uses RPC to fetch ledgers (the only
-	// implementation today).
+	// implementation).
 	LedgerBackendTypeRPC LedgerBackendType = "rpc"
-	// LedgerBackendTypeDatastore reads archived ledgers from cloud
-	// object storage (S3/GCS). Stubbed; not implemented.
-	LedgerBackendTypeDatastore LedgerBackendType = "datastore"
 )
 
 // NewLedgerBackend constructs a LedgerBackend for the given RPC URL,
 // matching cfg.Indexer. The URL is a parameter rather than read from cfg
 // because the failover pool builds one backend per endpoint it adopts.
-// The choice is driven by INDEXER_LEDGER_BACKEND_TYPE; "rpc" is the
-// only supported value today. "datastore" is reserved for a future
-// S3/GCS-backed implementation.
+// The choice is driven by INDEXER_LEDGER_BACKEND_TYPE; "rpc" is the only
+// supported value.
 func NewLedgerBackend(cfg *config.Config, rpcURL string) (ledgerbackend.LedgerBackend, error) {
 	switch LedgerBackendType(cfg.Indexer.LedgerBackendType) {
-	case LedgerBackendTypeDatastore:
-		return nil, fmt.Errorf("datastore backend not implemented yet")
 	case LedgerBackendTypeRPC:
 		return newRPCLedgerBackend(cfg, rpcURL), nil
 	default:

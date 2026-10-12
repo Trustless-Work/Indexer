@@ -4,22 +4,15 @@ This document is the canonical specification of the messages the Indexer
 publishes to RabbitMQ. It is the contract that consumers — primarily the
 Trustless Work NestJS API — rely on to build their views.
 
-> **Status (updated 2026-05-21):** this is the **target** wire contract the
-> processor pipeline is being built toward; the Indexer does not publish
-> yet. Both the Indexer and the consuming API code against this shape.
->
-> **Implemented so far:** escrow identity by approved WASM hash
-> (`internal/indexer/registry` + `ESCROW_APPROVED_WASM_HASHES`); on-chain
-> discovery of escrows (`processors.EscrowDiscovery`); and registry-filtered
-> detection of `event`/`deposit` facts (`processors.EscrowEventDetector`,
-> type `EscrowEvent`). Those facts already carry the envelope's identity,
-> kind, index, tx-order and raw-XDR fields.
->
-> **Pending (resume here):** the `state` stream (ContractData snapshots via
-> `LedgerTransaction.GetChanges()`); serialising `EscrowEvent` facts into the
-> JSON envelope below (incl. `message_id`, `schema_version`); the RabbitMQ
-> sink + routing keys + publisher confirms; and escrow bootstrap (API seed +
-> `getLedgerEntries` fallback for escrows created before the indexed range).
+> **Status (updated 2026-10-12):** this is the **live** wire contract. The
+> Indexer publishes to RabbitMQ in production (testnet) and the core API
+> consumes these shapes (`src/presentation/ingestion` +
+> `src/application/ingestion` in `trustlesswork-core-api`). Every stream
+> described below — `event`, `deposit`, `state`, `gap` — is implemented,
+> published with per-message publisher confirms and deterministic
+> `message_id`s, and signed with the `x-tw-sig` AMQP header when
+> `ENVELOPE_HMAC_KEY` is configured. A change to this document is a change
+> to the consumer: follow `.claude/skills/envelope-contract-change`.
 
 ## Design principles
 
