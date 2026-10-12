@@ -39,10 +39,10 @@ already analyzed and rejected for a stated reason.
 | Item | Title | Status | PR |
 |------|-------|--------|----|
 | W1 | Dead code removal & truthful metadata | ✅ | `chore/w1-dead-code-and-metadata` |
-| W2 | CI parity (race, staticcheck, gosec, govulncheck) | ☐ | |
+| W2 | CI parity (race, staticcheck, gosec, govulncheck) | ✅ | `ci/w2-parity` |
 | W3 | Loop invariant test (publish-fails ⇒ no Save) | ☐ | |
 | W4 | Secret & transport validation | ☐ | |
-| W5 | HTTP server timeouts | ☐ | |
+| W5 | HTTP server timeouts | ✅ | folded into `ci/w2-parity` (see W5 note) |
 | W6 | State Load: orphan-watchlist merge | ☐ | |
 | W7 | Chain-data robustness (recover, tx success, strkey) | ☐ | |
 | W8 | Threat model document | ☐ | |
@@ -113,11 +113,11 @@ arithmetic; a per-site review is deferred work, mirror the Sierpe comment
 convention), G304 (`STATE_PATH` is operator-controlled by design).
 
 **Checklist:**
-- [ ] W1 merged first
-- [ ] `-race` in CI
-- [ ] staticcheck green
-- [ ] gosec green with centralized, dated, justified excludes only
-- [ ] govulncheck green
+- [x] W1 merged first
+- [x] `-race` in CI
+- [x] staticcheck green
+- [x] gosec green with centralized, dated, justified excludes only (G115, G118, G301, G302, G304 — reasons in ci.yml; G112 was real and got FIXED instead, see W5)
+- [x] govulncheck green — required upgrading deps to fixed versions (amqp091-go 1.11→1.13, x/net 0.47→0.60, grpc 1.64→1.83, otel 1.45, aws eventstream/s3), which pulled the module to Go 1.26 (Dockerfile + README updated). 19 reachable vulnerabilities cleared; the 5 remaining are in unreachable code and do not fail the scan.
 
 ## W3 — Loop invariant test (publish-fails ⇒ no Save)
 
@@ -205,10 +205,17 @@ If one is ever added anyway: global token bucket over `/admin` 401s only,
 generous burst, never touching health routes (a mis-scoped limiter 429s
 `/healthz` and Railway restarts the service).
 
+**Execution note (2026-10-12):** folded into W2's PR instead of its own. Reason:
+gosec (added by W2) flags the missing timeouts as G112, and the only alternatives
+were shipping a linter config that excludes a KNOWN-REAL finding (the exact
+alert-fatigue anti-pattern this plan prohibits) or an extra one-commit PR cycle
+for a 10-line fix. The one-PR-per-item rule exists for reviewability; +10 lines
+does not threaten it.
+
 **Checklist:**
-- [ ] Four timeouts set on the server
-- [ ] Health/readiness probes verified unaffected
-- [ ] Rate-limiter decision referenced in W8
+- [x] Four timeouts set on the server (ReadHeader 5s, Read 10s, Write 10s, Idle 60s — largest legitimate exchange is the 1MB-capped admin body)
+- [x] Health/readiness probes verified unaffected (full test suite green after the change)
+- [ ] Rate-limiter decision referenced in W8 (pending W8 itself)
 
 ## W6 — State Load: orphan-watchlist merge
 

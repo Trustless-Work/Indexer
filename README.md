@@ -28,7 +28,7 @@ failed; the supervisor's restart retries the pool from the top.
 
 ## Prerequisites
 
-- **Go 1.25+** - [Download](https://go.dev/dl/)
+- **Go 1.26+** - [Download](https://go.dev/dl/)
 - **Make** (optional) - Usually pre-installed on macOS/Linux
 - **Docker** (optional) - Only for the local RabbitMQ stack (`make up`)
 
@@ -36,7 +36,7 @@ failed; the supervisor's restart retries the pool from the top.
 
 ```bash
 go version
-# Should display: go version go1.25.x or higher
+# Should display: go version go1.26.x or higher
 ```
 
 ## Installation

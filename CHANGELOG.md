@@ -10,7 +10,21 @@ see `docs/event-schema.md`.
 
 ## [Unreleased]
 
+### Security
+- HTTP timeouts on the health/admin server (read-header 5s, read 10s,
+  write 10s, idle 60s). Without them one slow client could hold a
+  goroutine forever (slowloris) on the port that also carries `/admin`.
+- Dependency upgrades clearing every vulnerability reachable from this
+  codebase (19 findings): `amqp091-go` 1.11.0 → 1.13.0, `golang.org/x/net`
+  0.47 → 0.60, `grpc` 1.64 → 1.83, OpenTelemetry 1.45, AWS eventstream/s3
+  (transitive via the Stellar SDK). The `x/net` fix requires Go 1.26:
+  module, Dockerfile build image and README updated accordingly.
+
 ### Added
+- CI now runs the race detector, staticcheck, gosec and govulncheck on
+  every push and PR. Scanners are deliberately unpinned so a new rule or
+  newly disclosed vulnerability fails the build; gosec excludes are
+  centralized in the workflow with dated justifications (never inline).
 - `/status` now reports the build version (`version` field). The Dockerfile
   already stamped builds via `-X` ldflag, but the target variable did not
   exist, so the stamp was silently ignored and `/status` had no version

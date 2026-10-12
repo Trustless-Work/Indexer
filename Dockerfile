@@ -3,7 +3,7 @@
 # --- Build stage -------------------------------------------------------------
 # Alpine + Go because we want a small layer cache and a static binary.
 # CGO is disabled so the resulting binary runs on any glibc/musl base.
-FROM golang:1.25-alpine AS builder
+FROM golang:1.26-alpine AS builder
 
 WORKDIR /src
 

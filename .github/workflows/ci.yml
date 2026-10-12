@@ -3,8 +3,12 @@
 # deploy of a service the platform depends on.
 #
 # The checks mirror the local pre-push ritual exactly (gofmt, vet,
-# build, test) and the build matches the Dockerfile's CGO_ENABLED=0 so
-# "compiles in CI" means "compiles in the image".
+# build, test -race) and the build matches the Dockerfile's
+# CGO_ENABLED=0 so "compiles in CI" means "compiles in the image".
+# staticcheck, gosec and govulncheck run deliberately UNPINNED
+# (@latest): a new rule or a new vulnerability failing CI is the
+# feature, not flakiness — the alternative is scanning with stale
+# tools and calling it green.
 name: CI
 
 on:
@@ -41,5 +45,31 @@ jobs:
       - name: build (CGO_ENABLED=0, same as the Dockerfile)
         run: CGO_ENABLED=0 go build ./...
 
-      - name: tests
-        run: go test ./...
+      - name: tests (race detector)
+        run: go test -race ./...
+
+      - name: staticcheck
+        run: go run honnef.co/go/tools/cmd/staticcheck@latest ./...
+
+      # Excluded rules, reviewed 2026-10-12 (docs/hardening-plan.md W2).
+      # Every exclude lives HERE with its reason — never as inline
+      # #nosec comments, which rot invisibly:
+      #   G115 — uint32 narrowing on ledger sequences; values come from
+      #          the chain (uint32 by protocol) or validated config. A
+      #          per-site review is deferred work (hardening plan,
+      #          Phase 2).
+      #   G118 — single hit: the health server's shutdown goroutine
+      #          deliberately builds a fresh context because the parent
+      #          ctx is already cancelled when Shutdown runs.
+      #   G301/G302 — state dir 0755 / files 0644: they hold no secrets
+      #          (cursor, contract ids, gap evidence) and the container
+      #          runs a single non-root uid. Tightening is considered
+      #          with the state-load work (hardening plan W6).
+      #   G304 — file paths are operator-supplied config by design
+      #          (STATE_PATH, ESCROW_SEED_PATH); there is no untrusted
+      #          path input.
+      - name: gosec
+        run: go run github.com/securego/gosec/v2/cmd/gosec@latest -exclude=G115,G118,G301,G302,G304 ./...
+
+      - name: govulncheck (reachable vulnerabilities fail the build)
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
