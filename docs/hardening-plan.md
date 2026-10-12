@@ -43,7 +43,7 @@ already analyzed and rejected for a stated reason.
 | W3 | Loop invariant test (publish-fails ⇒ no Save) | ✅ | `test/w3-loop-invariant` |
 | W4 | Secret & transport validation | ✅ | `security/w4-secret-validation` |
 | W5 | HTTP server timeouts | ✅ | folded into `ci/w2-parity` (see W5 note) |
-| W6 | State Load: orphan-watchlist merge | ☐ | |
+| W6 | State Load: orphan-watchlist merge | ✅ | `fix/w6-orphan-watchlist` |
 | W7 | Chain-data robustness (recover, tx success, strkey) | ☐ | |
 | W8 | Threat model document | ☐ | |
 | W9 | HMAC key rotation (cross-repo) | ☐ | |
@@ -254,12 +254,21 @@ surgery. Refuse-boot bricks deployments; merge recovers both cases.
 `.claude/skills/ops-runbook` skill (the mode changes from "destroys evidence
 silently" to "recovered with a warning").
 
+**Implementation note (2026-10-12):** `Load` returns the recovered contents
+ALONGSIDE `ErrStateNotFound` (data + sentinel), so the cursor-missing semantics
+stay intact for start-ledger resolution: a recovered boot must start like a fresh
+one (configured start ledger), NOT resume from ledger 1 with a giant clamp gap.
+The caller's `ErrStateNotFound` branch preserves the recovered escrows,
+tombstones and gaps, checks the network stamp, and seeds the registry from the
+watchlist instead of the seed file.
+
 **Checklist:**
-- [ ] Orphan watchlist → loaded + warning (test)
-- [ ] No files → fresh start (test, unchanged behavior)
-- [ ] Both files → merged exactly as today (test, unchanged behavior)
-- [ ] Corrupt orphan watchlist → `ErrStateCorrupted` (test)
-- [ ] CLAUDE.md + ops-runbook updated in the same PR
+- [x] Orphan watchlist → loaded + warning (state-level tests plus a loop-level test running the real `Ingest()` against the incident shape: gap republished, event detected from a recovered escrow, tombstone survives the run, seed file does NOT override recovery)
+- [x] No files → fresh start (test, unchanged behavior)
+- [x] Both files → merged exactly as today (existing round-trip tests unchanged and green)
+- [x] Corrupt orphan watchlist → `ErrStateCorrupted` (test)
+- [x] CLAUDE.md + ops-runbook updated in the same PR (cursor-only delete is now documented as recovered; a FULL reset must remove the watchlist file too)
+- [x] Incident regression pinned: the save-after-recovery that used to destroy the evidence now preserves it (test)
 
 ## W7 — Chain-data robustness
 

@@ -63,6 +63,13 @@ see `docs/event-schema.md`.
   change; `DeferredClose` and `IsContractAddress` remain.
 
 ### Fixed
+- Orphan-watchlist recovery: when the cursor file is missing but the
+  watchlist file survives (cursor-only delete, or a crash between the
+  first-ever watchlist and cursor writes), boot now loads the surviving
+  escrows, tombstones and gap evidence with a loud warning and starts
+  fresh from the configured start ledger. Previously the first save of
+  the "fresh" boot overwrote the watchlist silently — destroying
+  tombstones and gap evidence. A corrupt orphan watchlist refuses boot.
 - Stale documentation: `docs/event-schema.md`'s opening status block said
   the Indexer does not publish yet (it has for months — the shape sections
   were already current); the `internal/ingest` package doc described a

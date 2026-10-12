@@ -109,11 +109,20 @@ func NewFileStore(path string) (*FileStore, error) {
 // Load reads and merges the on-disk record. Returns ErrStateNotFound when
 // no cursor file exists and ErrStateCorrupted when either file cannot be
 // parsed.
+//
+// When the cursor file is missing but a watchlist file survives (an
+// operator removed only the cursor, or the process crashed between the
+// first-ever watchlist write and the first-ever cursor write), the
+// returned State carries the watchlist's contents ALONGSIDE
+// ErrStateNotFound, so the caller can start fresh without silently
+// destroying tombstones and gap evidence on its first Save. Refusing to
+// boot here instead would turn the benign crash window into a permanent
+// crash-loop — Save writes the watchlist before the cursor by design.
 func (s *FileStore) Load(_ context.Context) (State, error) {
 	data, err := os.ReadFile(s.path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return State{}, ErrStateNotFound
+			return s.loadOrphanWatchlist()
 		}
 		return State{}, fmt.Errorf("reading state file %q: %w", s.path, err)
 	}
@@ -147,6 +156,34 @@ func (s *FileStore) Load(_ context.Context) (State, error) {
 	st.Gaps = wl.Gaps
 	s.lastWatchlist = wlData
 	return st, nil
+}
+
+// loadOrphanWatchlist handles the cursor-file-missing case: a surviving
+// watchlist file is loaded and returned WITH ErrStateNotFound (fresh
+// start, preserved evidence); a corrupt one is ErrStateCorrupted — a
+// damaged evidence file is the one orphan case where stopping beats
+// guessing; no file at all is a plain fresh start.
+func (s *FileStore) loadOrphanWatchlist() (State, error) {
+	wlPath := watchlistPath(s.path)
+	wlData, err := os.ReadFile(wlPath)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return State{}, ErrStateNotFound
+	case err != nil:
+		return State{}, fmt.Errorf("reading watchlist file %q: %w", wlPath, err)
+	}
+
+	var wl watchlistRecord
+	if err := json.Unmarshal(wlData, &wl); err != nil {
+		return State{}, fmt.Errorf("%w: orphan watchlist: %v", ErrStateCorrupted, err)
+	}
+	s.lastWatchlist = wlData
+	return State{
+		Network:         wl.Network,
+		EscrowContracts: wl.EscrowContracts,
+		RemovedEscrows:  wl.RemovedEscrows,
+		Gaps:            wl.Gaps,
+	}, ErrStateNotFound
 }
 
 // Save persists st: the watchlist file only when its content changed,

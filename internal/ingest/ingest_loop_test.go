@@ -14,6 +14,7 @@ package ingest
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -434,5 +435,97 @@ func TestIngest_PublishFailureOnFinalLedger(t *testing.T) {
 	}
 	if h.stateFileExists() {
 		t.Fatal("cursor file exists: the final ledger was saved despite its unpublished fact")
+	}
+}
+
+// TestIngest_OrphanWatchlistRecovered runs the loop against the incident
+// shape W6 exists for: the cursor file is gone, the watchlist file
+// survives. The run must start fresh, keep the surviving escrows and
+// tombstones, republish the surviving gap evidence, and persist all of
+// it — before the fix, the first Save destroyed the watchlist silently.
+func TestIngest_OrphanWatchlistRecovered(t *testing.T) {
+	const end, eventAt = uint32(5), uint32(3)
+
+	out := &loopSink{}
+	h := newLoopHarness(t, end, eventFixture(t, end, eventAt), out)
+
+	tombRaw := make([]byte, 32)
+	tombRaw[0] = 0x43
+	tombstoned, err := strkey.Encode(strkey.VersionByteContract, tombRaw)
+	if err != nil {
+		t.Fatalf("encoding tombstone id: %v", err)
+	}
+
+	// The surviving watchlist: the event's escrow comes from HERE, not
+	// from the seed file (recovery must win over seeding), plus a
+	// tombstone and one gap.
+	wl := map[string]any{
+		"version":          1,
+		"network":          testPassphrase,
+		"escrow_contracts": []string{testEscrowID(t)},
+		"removed_escrows":  []string{tombstoned},
+		"gaps": []map[string]any{{
+			"from_ledger": uint32(10),
+			"to_ledger":   uint32(20),
+			"reason":      "rpc_retention",
+			"detected_at": "2026-07-22T00:00:00Z",
+		}},
+	}
+	wlJSON, err := json.Marshal(wl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wlPath := strings.TrimSuffix(h.statePath, ".json") + ".watchlist.json"
+	if err := os.WriteFile(wlPath, wlJSON, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Make the seed file disagree on purpose: recovery must take the
+	// watchlist, not the seed.
+	if err := os.WriteFile(h.cfg.Escrow.SeedPath, []byte(tombstoned+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Ingest(context.Background(), h.cfg); err != nil {
+		t.Fatalf("Ingest: %v", err)
+	}
+
+	var gapSeen, eventSeen bool
+	for _, env := range out.snapshot() {
+		switch env.Type {
+		case "control":
+			if env.GapFromLedger == 10 && env.GapToLedger == 20 {
+				gapSeen = true
+			}
+		case "event":
+			eventSeen = true
+		}
+	}
+	if !gapSeen {
+		t.Error("surviving gap evidence was not republished")
+	}
+	if !eventSeen {
+		t.Error("event from a recovered watchlist escrow was not detected")
+	}
+
+	store, err := state.NewFileStore(h.statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	st, err := store.Load(context.Background())
+	if err != nil {
+		t.Fatalf("loading state after recovery run: %v", err)
+	}
+	if st.LastLedgerSeq != end {
+		t.Errorf("cursor = %d, want %d", st.LastLedgerSeq, end)
+	}
+	if len(st.RemovedEscrows) != 1 || st.RemovedEscrows[0] != tombstoned {
+		t.Errorf("tombstones lost across recovery: %v", st.RemovedEscrows)
+	}
+	if len(st.Gaps) != 1 || st.Gaps[0].FromLedger != 10 {
+		t.Errorf("gap evidence lost across recovery: %+v", st.Gaps)
+	}
+	if len(st.EscrowContracts) != 1 || st.EscrowContracts[0] != testEscrowID(t) {
+		t.Errorf("escrows = %v, want the recovered watchlist (tombstoned seed id must NOT re-enter)", st.EscrowContracts)
 	}
 }
