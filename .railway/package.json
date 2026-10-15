@@ -1,0 +1,12 @@
+{
+  "name": "trustlesswork-indexer-railway-config",
+  "private": true,
+  "description": "Railway IaC SDK for evaluating .railway/railway.ts. Not part of the Go build.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.6"
+  },
+  "dependencies": {
+    "railway": "3.16.0"
+  }
+}

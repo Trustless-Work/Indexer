@@ -10,6 +10,18 @@ see `docs/event-schema.md`.
 
 ## [Unreleased]
 
+### Changed
+- Railway service settings moved from Config as Code (`railway.json`,
+  removed; Railway stops reading it on 2026-12-01) to Infrastructure as
+  Code (`.railway/railway.ts`). Same settings: Dockerfile builder,
+  restart policy `ALWAYS` with 10 retries, exactly one replica. The file
+  is a named partial (`Indexer`) and leaves variables unmanaged, so it
+  touches neither the broker nor any variable. **Operational:** Railway
+  never reads `.railway/` on deploy — settings change only through
+  `railway config plan` / `apply` (CLI 5.68.0+). Merging this change
+  makes deploys use the settings stored on the service, so run the
+  pre-merge plan check in `docs/railway-deployment.md` section 6 first.
+
 ### Security
 - Secret validation at boot: `ADMIN_TOKEN`, when set, must be at least
   16 characters and `ENVELOPE_HMAC_KEY`, when set, at least 32 bytes —

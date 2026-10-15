@@ -19,6 +19,9 @@ indexer.watchlist.seed.json
 # Build artifacts (rebuilt inside the image)
 bin/
 
+# Railway IaC config — read by the Railway CLI, never by the build
+.railway
+
 # Docker bits — not needed inside the image
 Dockerfile
 .dockerignore

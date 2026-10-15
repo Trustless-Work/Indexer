@@ -14,7 +14,11 @@ indexer.state.watchlist.json.tmp
 indexer.watchlist.seed.json
 
 # Deployments
-
+# Railway IaC tooling (.railway/package.json and the lockfile ARE
+# versioned): installed SDK, and the per-operator cutover undo snapshot
+# written by `railway config migrate cutover`.
+.railway/node_modules/
+.railway/.cac-migration.json
 
 # IDE's
 .vscode/*
