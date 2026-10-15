@@ -23,7 +23,7 @@ Pero **hay 3 bloqueantes reales** antes de un despliegue productivo en mainnet:
    servidor HTTP en el código Go. Conclusión: el servicio se despliega como **worker** (sin
    dominio público, sin `healthcheckPath`). Si pones un healthcheck, el deploy falla.
 
-Lo demás es configuración de variables y un `railway.json` opcional.
+Lo demás es configuración de variables y `.railway/railway.ts` (sección 6).
 
 ---
 
@@ -66,8 +66,8 @@ Railway tiene dos builders:
 **Para este proyecto: usar el Dockerfile existente.** Ya resuelve binario estático, usuario
 no-root, certificados CA (TLS al RPC de Stellar) y `tini`. No reinventar con Railpack.
 
-No hace falta tocar nada para que lo detecte, pero conviene hacerlo explícito con config-as-code
-(sección 6).
+No hace falta tocar nada para que lo detecte, pero conviene hacerlo explícito con
+infrastructure-as-code (sección 6).
 
 ---
 
@@ -129,7 +129,7 @@ template interno alcanza y es más barato.
 
 - **Railway NO exige escuchar en `$PORT`.** Solo lo exige si querés dominio público o healthchecks.
   Un worker de fondo (sin dominio, sin `healthcheckPath`) corre perfecto. **Desplegá como worker.**
-- **No configures `healthcheckPath`** en `railway.json`: Railway haría requests a un endpoint
+- **No configures `healthcheck`** en `.railway/railway.ts`: Railway haría requests a un endpoint
   inexistente y marcaría el deploy como fallido (service unavailable).
 - Ojo con el `PORT`: Railway **inyecta** `PORT`, pero el código lee `HEALTH_PORT` (prefijado), así
   que **no hay choque** — simplemente el `PORT` de Railway se ignora.
@@ -169,31 +169,63 @@ podés añadir `healthcheckPath: /readyz`. Es un buen primer PR de "production-r
 
 ---
 
-## 6. `railway.json` recomendado (config-as-code)
+## 6. Service settings as code (`.railway/railway.ts`)
 
-Opcional pero recomendado: versiona la intención del build/deploy en el repo. Railway combina esto
-con el dashboard y **el archivo gana**.
+Config as Code (`railway.json`) is deprecated and Railway stops reading it on
+**2026-12-01**. The Indexer's service settings now live in
+[`.railway/railway.ts`](../.railway/railway.ts) (Railway Infrastructure as Code),
+with the same values `railway.json` had:
 
-```json
-{
-  "$schema": "https://railway.com/railway.schema.json",
-  "build": {
-    "builder": "DOCKERFILE"
-  },
-  "deploy": {
-    "restartPolicyType": "ALWAYS",
-    "numReplicas": 1
-  }
-}
+| Setting | Value | Why |
+|---|---|---|
+| `build.builder` | `DOCKERFILE` | The root `Dockerfile` (static binary, non-root user, `tini`). |
+| `deploy.restartPolicyType` | `ALWAYS` (max 10 retries) | Fatal integrity errors and all-RPCs-down exit the process; Railway brings it back and the indexer resumes from its cursor. |
+| `replicas` | `1` | Two live indexers on one state volume is forbidden: the ingest loop is the single writer. |
+
+The file is deliberately narrow:
+
+- **Named partial `Indexer`.** It manages only what it declares. The RabbitMQ
+  service is not declared and an apply never plans its deletion.
+- **`variables: { managed: false }`.** Variables stay owned by the dashboard.
+  Without it IaC owns every variable on the service, and the secrets and
+  `STATE_PATH` would have to be declared in the file.
+- **No volume, no source, no healthcheck.** The state volume and the GitHub
+  source stay as they are on the service; `railway.json` declared no
+  healthcheck either. Never add a `volume()` with a guessed name for the state
+  volume: a name that does not match the existing volume creates a new, empty
+  one, which is the "first boot at the tip" silent-loss mode.
+
+### How it is applied (not on deploy)
+
+Railway **never reads `.railway/` during a deploy**. A push to `main` builds and
+deploys with the settings stored on the service; the file changes them only when
+an operator runs the CLI. Requirements: Railway CLI **5.68.0+**, Node **22.6+**.
+
+Run for each environment (testnet today, mainnet later), from a checkout of the
+branch that carries the change:
+
+```bash
+railway link                                   # project + environment
+npm ci --prefix .railway                       # SDK used to evaluate railway.ts
+railway config migrate status                  # still on Config as Code via a Config File path?
+railway config plan
 ```
 
-Notas:
-- **Sin `healthcheckPath`** a propósito (no hay endpoint todavía — ver sección 4).
-- `restartPolicyType: ALWAYS` → si el proceso muere (p.ej. un error fatal de integridad
-  o todos los RPC caídos), Railway lo levanta. Combiná con la lógica de catch-up del
-  propio indexer.
-- Si más adelante implementás health: agregá `"healthcheckPath": "/readyz"` y subí
-  `healthcheckTimeout` si el primer readiness tarda.
+- If `migrate status` lists `Indexer`, run `railway config migrate cutover
+  --service Indexer` first (clears the Config File path and redeploys; undo
+  with `railway config migrate undo`).
+- **Accept the plan only if** it shows no changes, or `build`/`deploy` updates
+  to exactly the values in the table above. **Do not apply** if it lists any
+  `volumeAttachments`, `source` or variable change, or any delete. Compare the
+  file with what the official tool would generate (read-only, prints the
+  file): `railway config migrate --show --service Indexer --variables=unmanaged`.
+- `railway config apply` writes the settings and redeploys the service (one
+  replica: a restart that resumes from the cursor).
+
+**Ordering for the migration PR** (the one that deletes `railway.json`): plan
+and, if needed, apply **before merging**. Until `railway.json` leaves `main`,
+every deploy still applies it; from the merge on, deploys use the settings stored
+on the service. Applying first makes the switch a no-op.
 
 ---
 
@@ -246,7 +278,7 @@ HEALTH_ENABLED=false   # mientras no exista el servidor HTTP
 - [ ] Provisionar servicio **RabbitMQ** (template) en el proyecto.
 - [ ] Declarar **queue + binding** (consumidor, o manual la primera vez).
 - [ ] Crear servicio del **indexer** desde GitHub repo (rama productiva).
-- [ ] Confirmar que Railway usa el **Dockerfile** (o añadir `railway.json`).
+- [ ] Confirmar que Railway usa el **Dockerfile** (sección 6: `railway config plan` / `apply`).
 - [ ] Añadir **Volume** en `/var/lib/indexer` + `STATE_PATH` + `RAILWAY_RUN_UID=0`.
 - [ ] Cargar **variables de mainnet** (sección 7) con `RABBITMQ_URL` como reference variable.
 - [ ] **NO** generar dominio público ni `healthcheckPath` (es un worker).

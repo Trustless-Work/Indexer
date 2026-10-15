@@ -136,6 +136,8 @@ removed.
 
 ```
 .
+├── .railway/
+│   └── railway.ts             # Railway service settings (IaC, applied via CLI)
 ├── cmd/
 │   └── ingest.go              # Entry point: config load, logger, signals
 ├── internal/
@@ -180,6 +182,11 @@ Production runs on Railway (indexer + RabbitMQ in one project, state on
 a volume). The step-by-step guide, including the mainnet environment
 variables and the failover endpoint list, lives in
 [docs/railway-deployment.md](docs/railway-deployment.md).
+
+Service settings (Dockerfile builder, restart policy, one replica) are
+declared in [.railway/railway.ts](.railway/railway.ts). Railway does not
+read that file on deploy: changes to it take effect only through
+`railway config plan` / `apply` (guide, section 6).
 
 ## Further reading
 
